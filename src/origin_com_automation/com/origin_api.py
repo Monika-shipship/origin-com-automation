@@ -11,6 +11,7 @@ import os
 import re
 import shutil
 import subprocess
+import tempfile
 import time
 from collections import Counter
 from collections.abc import Callable, Iterable, Mapping
@@ -38,6 +39,10 @@ from ..objects.images import build_image_plan
 from ..objects.matrices import build_matrix_plan
 from ..objects.validation import ObjectPlanError
 from ..objects.worksheets import TransformValidationError, transform_table
+from ..graphs.catalog import GraphCatalogError, validate_graph_request
+from ..graphs.layout import GraphLayoutError, build_layout_plan
+from ..graphs.preview import inspect_png
+from ..graphs.templates import GraphTemplateError, apply_template_plan
 from ..services.analysis import build_analysis_request, run_analysis_data
 from ..services.exports import (
     export_suffixes,
@@ -3840,6 +3845,222 @@ class OriginController:
         return self._submit(analyze, retryable=True)
 
     @_serialized_operation
+    def create_graph(
+        self,
+        *,
+        graph_type: str,
+        roles: Mapping[str, Any],
+        graph_name: str | None = None,
+        allow_unverified: bool = False,
+    ) -> ResultEnvelope:
+        try:
+            catalog_entry = validate_graph_request(graph_type, roles)
+        except GraphCatalogError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+        if catalog_entry["status"] == "verified":
+            if not roles.get("worksheet"):
+                return ResultEnvelope.fail(
+                    "GRAPH_WORKSHEET_REQUIRED",
+                    "Verified worksheet graphs require the worksheet role",
+                )
+            y_value = roles["y"]
+            y_columns = list(y_value) if isinstance(y_value, (list, tuple)) else [y_value]
+            return self.create_plot(
+                worksheet_name=str(roles.get("worksheet", "")),
+                graph_type=graph_type,
+                x_column=roles["x"],
+                y_columns=y_columns,
+                label_column=roles.get("label"),
+                graph_name=graph_name,
+            )
+        if not allow_unverified:
+            return ResultEnvelope.fail(
+                "GRAPH_TYPE_UNVERIFIED",
+                f"{graph_type} is supported-unverified; set allow_unverified explicitly",
+                data={"catalog": catalog_entry},
+            )
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+        try:
+            serialized_roles = {
+                key: RangeRef(str(value)).value for key, value in roles.items()
+            }
+        except NativeValidationError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+        plot_id = catalog_entry["plot_id"]
+        if plot_id is None:
+            return ResultEnvelope.fail(
+                "GRAPH_EXECUTION_MAPPING_UNVERIFIED",
+                f"No numeric Origin plot mapping is enabled for {graph_type}",
+                data={"catalog": catalog_entry},
+            )
+        if catalog_entry["input_kind"] == "matrix":
+            command = f"plotm im:={serialized_roles['z']} plot:={plot_id};"
+        else:
+            ordered = [serialized_roles[key] for key in catalog_entry["required_roles"]]
+            command = f"plotxy iy:=({','.join(ordered)}) plot:={plot_id};"
+
+        def execute() -> ResultEnvelope:
+            result = self._require_app().Execute(command)
+            if result is False or result == 0:
+                return ResultEnvelope.fail(
+                    "GRAPH_CREATE_REJECTED", f"Origin rejected {graph_type} creation"
+                )
+            return ResultEnvelope.ok(
+                {
+                    "graph_type": graph_type,
+                    "graph_name": graph_name,
+                    "roles": serialized_roles,
+                    "status": "supported_unverified",
+                    "origin_command_accepted": True,
+                },
+                warnings=["Graph creation is not yet covered by a live version-specific smoke test"],
+            )
+
+        return self._submit(execute, stage=f"create_graph_{graph_type}")
+
+    @_serialized_operation
+    def manage_graph_layout(
+        self,
+        *,
+        action: str,
+        graph_ref: str,
+        source_graph_refs: list[str] | None = None,
+        layer_refs: list[str] | None = None,
+        position: list[float] | None = None,
+        rows: int | None = None,
+        columns: int | None = None,
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+        try:
+            plan = build_layout_plan(
+                action=action,
+                graph_ref=graph_ref,
+                source_graph_refs=source_graph_refs,
+                layer_refs=layer_refs,
+                position=position,
+                rows=rows,
+                columns=columns,
+            )
+        except (GraphLayoutError, ObjectPlanError) as exc:
+            return ResultEnvelope.fail(getattr(exc, "code", "GRAPH_LAYOUT_INVALID"), str(exc))
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            layer = _safe_call(app, "FindGraphLayer", plan.graph_ref, default=None)
+            if layer is None:
+                layer = _safe_call(app, "FindGraphLayer", f"[{plan.graph_ref}]1", default=None)
+            if layer is None:
+                return ResultEnvelope.fail("GRAPH_NOT_FOUND", f"Graph not found: {plan.graph_ref}")
+            result = layer.Execute(plan.command)
+            if result is False or result == 0:
+                return ResultEnvelope.fail("GRAPH_LAYOUT_REJECTED", f"Origin rejected layout {plan.action}")
+            return ResultEnvelope.ok(
+                {
+                    "action": plan.action,
+                    "graph_ref": plan.graph_ref,
+                    "source_graph_refs": list(plan.source_graph_refs),
+                    "position": list(plan.position) if plan.position else None,
+                    "expected_layer_delta": plan.expected_layer_delta,
+                    "status": "supported_unverified",
+                }
+            )
+
+        return self._submit(execute, stage=f"graph_layout_{plan.action}")
+
+    @_serialized_operation
+    def apply_graph_template(
+        self,
+        *,
+        graph_ref: str,
+        template_path: str,
+        expected_sha256: str,
+        required_layers: int | None = None,
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            page = _safe_call(_safe_attr(app, "GraphPages"), "Item", graph_ref, default=None)
+            if page is None:
+                return ResultEnvelope.fail("GRAPH_NOT_FOUND", f"Graph not found: {graph_ref}")
+            layers = _safe_attr(page, "Layers")
+            actual_layers = int(_safe_attr(layers, "Count", 0) or 0)
+            try:
+                plan = apply_template_plan(
+                    graph_ref=graph_ref,
+                    template_path=template_path,
+                    expected_sha256=expected_sha256,
+                    required_layers=required_layers,
+                    actual_layers=actual_layers,
+                )
+            except (GraphTemplateError, ObjectPlanError) as exc:
+                return ResultEnvelope.fail(getattr(exc, "code", "GRAPH_TEMPLATE_INVALID"), str(exc))
+            executor = getattr(page, "Execute", None)
+            if not callable(executor) and actual_layers:
+                executor = getattr(layers.Item(0), "Execute", None)
+            if not callable(executor):
+                return ResultEnvelope.fail("GRAPH_TEMPLATE_INTERFACE_UNAVAILABLE", "Graph does not expose Execute")
+            result = executor(plan.command)
+            if result is False or result == 0:
+                return ResultEnvelope.fail("GRAPH_TEMPLATE_REJECTED", "Origin rejected template application")
+            return ResultEnvelope.ok(
+                {
+                    "graph_ref": graph_ref,
+                    "template_path": str(plan.template_path),
+                    "sha256": plan.sha256,
+                    "layers": actual_layers,
+                    "status": "supported_unverified",
+                }
+            )
+
+        return self._submit(execute, stage="apply_graph_template")
+
+    def view_graph(
+        self,
+        *,
+        graph_name: str,
+        output_path: str | None = None,
+        expected_colors: list[str] | None = None,
+        tolerance: int = 12,
+    ) -> ResultEnvelope:
+        target = Path(output_path).expanduser().resolve() if output_path else (
+            Path(tempfile.gettempdir()) / f"origin-preview-{uuid4().hex}.png"
+        )
+        exported = self.export_graph(
+            graph_name=graph_name,
+            output_path=str(target),
+            export_format="png",
+            overwrite="replace",
+        )
+        if not exported.success:
+            return exported
+        try:
+            metrics = inspect_png(target, expected_colors=expected_colors, tolerance=tolerance)
+        except (OSError, ValueError) as exc:
+            return ResultEnvelope.fail(
+                "GRAPH_PREVIEW_INVALID",
+                str(exc),
+                artifacts=exported.artifacts,
+            )
+        return ResultEnvelope.ok(
+            {
+                **(exported.data or {}),
+                "preview_path": str(target),
+                "pixel_metrics": metrics,
+            },
+            artifacts=exported.artifacts,
+            warnings=exported.warnings,
+            duration_ms=exported.duration_ms,
+            origin_version=exported.origin_version,
+        )
+
+    @_serialized_operation
     def create_plot(
         self,
         *,
@@ -3890,6 +4111,7 @@ class OriginController:
             plot_type = {
                 "line": ORIGIN_PLOT_LINE,
                 "scatter": ORIGIN_PLOT_SCATTER,
+                "line_symbol": ORIGIN_PLOT_LINESYMB,
                 "semilog": ORIGIN_PLOT_LINE,
                 "loglog": ORIGIN_PLOT_LINE,
                 "bar": ORIGIN_PLOT_COLUMN,

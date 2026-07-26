@@ -4,18 +4,26 @@ from __future__ import annotations
 
 import logging
 import sys
+import base64
+import json
 from copy import deepcopy
 from collections.abc import Callable
+from pathlib import Path
 from typing import Annotated, Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
+from mcp.types import ImageContent, TextContent
 from pydantic import BaseModel, ConfigDict, Field
 
 from .capabilities import capability_report
 from .com.origin_api import OriginController
 from .contracts import ResultEnvelope
 from .data_inspection import DataInspectionError, inspect_data_source
+from .graphs.catalog import graph_catalog
+from .graphs.palettes import palette_catalog
+from .graphs.preview import inspect_png
+from .graphs.templates import discover_templates
 from .native.common import FileRef, OutputRef, RangeRef
 from .tools.health import health_check
 
@@ -341,6 +349,37 @@ def create_server(
         except DataInspectionError as exc:
             return ResultEnvelope.fail("DATA_INSPECTION_FAILED", str(exc))
 
+    @strict_tool(name="origin_graph_catalog")
+    def origin_graph_catalog(
+        family: Literal["2d", "statistical", "polar", "ternary", "matrix", "3d"] | None = None,
+    ) -> ResultEnvelope:
+        """List graph families, exact data roles, Origin mappings, and verification status."""
+        return ResultEnvelope.ok({"graph_types": graph_catalog(family=family)})
+
+    @strict_tool(name="origin_palette_catalog")
+    def origin_palette_catalog() -> ResultEnvelope:
+        """List plugin-owned scientific palettes with exact colors and usage restrictions."""
+        return ResultEnvelope.ok({"palettes": palette_catalog()})
+
+    @strict_tool(name="origin_list_graph_templates")
+    def origin_list_graph_templates(roots: list[str]) -> ResultEnvelope:
+        """Discover .otp/.otpu templates only beneath explicit template roots."""
+        return ResultEnvelope.ok({"templates": discover_templates(roots), "roots": roots})
+
+    @strict_tool(name="origin_inspect_png")
+    def origin_inspect_png(
+        path: str,
+        expected_colors: list[HexColor] | None = None,
+        tolerance: Annotated[int, Field(ge=0, le=255)] = 12,
+    ) -> ResultEnvelope:
+        """Measure PNG content, alpha coverage, bounding box, and expected-color pixels."""
+        try:
+            return ResultEnvelope.ok(
+                inspect_png(path, expected_colors=expected_colors, tolerance=tolerance)
+            )
+        except (OSError, ValueError) as exc:
+            return ResultEnvelope.fail("PNG_INSPECTION_FAILED", str(exc))
+
     @strict_tool(name="origin_start")
     def origin_start(
         progid: str | None = None,
@@ -649,6 +688,90 @@ def create_server(
             graph_name=graph_name,
             options=options.model_dump(exclude_none=True) if options else None,
         )
+
+    @strict_tool(name="origin_create_graph")
+    def origin_create_graph(
+        graph_type: str,
+        roles: dict[str, str | int | list[str | int]],
+        graph_name: str | None = None,
+        allow_unverified: bool = False,
+    ) -> ResultEnvelope:
+        """Create a catalog graph from explicit named roles; unverified types require opt-in."""
+        return active_controller().create_graph(
+            graph_type=graph_type,
+            roles=roles,
+            graph_name=graph_name,
+            allow_unverified=allow_unverified,
+        )
+
+    @strict_tool(name="origin_manage_graph_layout")
+    def origin_manage_graph_layout(
+        action: Literal["add_layer", "grid", "inset", "dual_y", "link_axes", "merge", "extract"],
+        graph_ref: str,
+        source_graph_refs: list[str] | None = None,
+        layer_refs: list[str] | None = None,
+        position: list[float] | None = None,
+        rows: Annotated[int, Field(ge=1)] | None = None,
+        columns: Annotated[int, Field(ge=1)] | None = None,
+    ) -> ResultEnvelope:
+        """Manage layers, insets, dual-Y, grids, links, merges, and extraction."""
+        return active_controller().manage_graph_layout(
+            action=action,
+            graph_ref=graph_ref,
+            source_graph_refs=source_graph_refs,
+            layer_refs=layer_refs,
+            position=position,
+            rows=rows,
+            columns=columns,
+        )
+
+    @strict_tool(name="origin_apply_graph_template")
+    def origin_apply_graph_template(
+        graph_ref: str,
+        template_path: str,
+        expected_sha256: str,
+        required_layers: Annotated[int, Field(ge=1)] | None = None,
+    ) -> ResultEnvelope:
+        """Apply one explicit digest-locked graph template after layer compatibility checks."""
+        return active_controller().apply_graph_template(
+            graph_ref=graph_ref,
+            template_path=template_path,
+            expected_sha256=expected_sha256,
+            required_layers=required_layers,
+        )
+
+    @strict_tool(name="origin_view_graph")
+    def origin_view_graph(
+        graph_name: str,
+        output_path: str | None = None,
+        expected_colors: list[HexColor] | None = None,
+        tolerance: Annotated[int, Field(ge=0, le=255)] = 12,
+    ) -> list[TextContent | ImageContent]:
+        """Export a graph preview and return pixel QA metrics and the PNG artifact path."""
+        result = active_controller().view_graph(
+            graph_name=graph_name,
+            output_path=output_path,
+            expected_colors=expected_colors,
+            tolerance=tolerance,
+        )
+        content: list[TextContent | ImageContent] = [
+            TextContent(
+                type="text",
+                text=json.dumps(result.to_dict(), ensure_ascii=False),
+            )
+        ]
+        preview_path = (result.data or {}).get("preview_path") if result.success else None
+        if preview_path:
+            path = Path(preview_path).expanduser().resolve()
+            if path.is_file() and path.suffix.lower() == ".png":
+                content.append(
+                    ImageContent(
+                        type="image",
+                        data=base64.b64encode(path.read_bytes()).decode("ascii"),
+                        mimeType="image/png",
+                    )
+                )
+        return content
 
     @strict_tool(name="origin_configure_graph")
     def origin_configure_graph(

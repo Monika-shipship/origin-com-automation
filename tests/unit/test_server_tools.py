@@ -80,6 +80,22 @@ class FakeController:
         self.calls.append(("manage_image", kwargs))
         return ResultEnvelope.ok(kwargs)
 
+    def create_graph(self, **kwargs):
+        self.calls.append(("create_graph", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def manage_graph_layout(self, **kwargs):
+        self.calls.append(("manage_graph_layout", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def apply_graph_template(self, **kwargs):
+        self.calls.append(("apply_graph_template", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def view_graph(self, **kwargs):
+        self.calls.append(("view_graph", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
 
 def test_server_registers_the_complete_origin_tool_surface():
     server = create_server(controller=FakeController())
@@ -109,6 +125,14 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_manage_connector",
         "origin_manage_matrix",
         "origin_manage_image",
+        "origin_graph_catalog",
+        "origin_palette_catalog",
+        "origin_create_graph",
+        "origin_manage_graph_layout",
+        "origin_list_graph_templates",
+        "origin_apply_graph_template",
+        "origin_inspect_png",
+        "origin_view_graph",
         "origin_execute_labtalk",
         "origin_create_plot",
         "origin_configure_graph",
@@ -144,6 +168,55 @@ def test_server_registers_the_complete_origin_tool_surface():
     ]:
         assert option_name in analysis_schema["properties"]
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
+
+
+def test_graph_expansion_tools_have_explicit_roles_and_safety_gates():
+    tools = asyncio.run(create_server(controller=FakeController()).list_tools())
+    schemas = {tool.name: tool.inputSchema for tool in tools}
+    create = schemas["origin_create_graph"]["properties"]
+    assert set(create) == {"graph_type", "roles", "graph_name", "allow_unverified"}
+    assert create["allow_unverified"]["default"] is False
+    template = schemas["origin_apply_graph_template"]["properties"]
+    assert "expected_sha256" in template
+    assert "required_layers" in template
+    preview = schemas["origin_view_graph"]["properties"]
+    assert "expected_colors" in preview
+    assert "tolerance" in preview
+
+
+def test_graph_catalog_and_palette_tools_do_not_start_origin():
+    controller = FakeController()
+    server = create_server(controller=controller)
+    catalog = asyncio.run(server.call_tool("origin_graph_catalog", {}))
+    palettes = asyncio.run(server.call_tool("origin_palette_catalog", {}))
+    assert catalog[1]["success"] is True
+    assert "ternary" in catalog[1]["data"]["graph_types"]
+    assert palettes[1]["success"] is True
+    assert controller.calls == []
+
+
+def test_view_graph_returns_text_envelope_and_image_content(tmp_path):
+    from PIL import Image
+
+    preview = tmp_path / "preview.png"
+    Image.new("RGB", (12, 8), "white").save(preview)
+
+    class PreviewController(FakeController):
+        def view_graph(self, **kwargs):
+            return ResultEnvelope.ok(
+                {"preview_path": str(preview), "pixel_metrics": {"dimensions": [12, 8]}}
+            )
+
+    result = asyncio.run(
+        create_server(controller=PreviewController()).call_tool(
+            "origin_view_graph", {"graph_name": "Graph1"}
+        )
+    )
+    content = result[0]
+    assert any(item.type == "text" and '"success": true' in item.text for item in content)
+    image = next(item for item in content if item.type == "image")
+    assert image.mimeType == "image/png"
+    assert image.data
 
 
 def test_native_tool_schemas_expose_discriminated_parameter_types():

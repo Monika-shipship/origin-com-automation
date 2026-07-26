@@ -6,7 +6,9 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
-SUPPORTED_GRAPH_TYPES = {"scatter", "line", "semilog", "loglog", "bar", "multi_layer"}
+SUPPORTED_GRAPH_TYPES = {
+    "scatter", "line", "line_symbol", "semilog", "loglog", "bar", "multi_layer"
+}
 
 
 @dataclass(frozen=True)
