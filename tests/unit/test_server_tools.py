@@ -52,6 +52,8 @@ def test_server_registers_the_complete_origin_tool_surface():
     names = {tool.name for tool in tools}
 
     assert names == {
+        "origin_capabilities",
+        "origin_inspect_data_source",
         "origin_health_check",
         "origin_start",
         "origin_open_project",
@@ -79,6 +81,37 @@ def test_server_registers_the_complete_origin_tool_surface():
     assert "allow_source_overwrite" in schemas["origin_save_and_replace_source"]
     assert "initial_guess" in schemas["origin_run_analysis"]
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
+
+
+def test_preflight_tools_have_strict_discoverable_schemas():
+    tools = asyncio.run(create_server(controller=FakeController()).list_tools())
+    schemas = {tool.name: tool.inputSchema for tool in tools}
+
+    capability = schemas["origin_capabilities"]
+    assert capability["properties"]["domain"]["anyOf"][0]["enum"] == [
+        "session",
+        "data",
+        "connector",
+        "matrix",
+        "image",
+        "analysis",
+        "graph",
+        "project",
+        "workflow",
+    ]
+    inspection = schemas["origin_inspect_data_source"]["properties"]
+    assert set(inspection) == {"file_path", "sheet_name", "has_header"}
+
+
+def test_capability_tool_runs_without_starting_origin():
+    controller = FakeController()
+    server = create_server(controller=controller)
+
+    result = asyncio.run(server.call_tool("origin_capabilities", {"domain": "graph"}))
+
+    assert result[1]["success"] is True
+    assert "graph.scatter" in result[1]["data"]["capabilities"]
+    assert controller.calls == []
 
 
 def test_read_and_labtalk_schemas_expose_explicit_result_types():

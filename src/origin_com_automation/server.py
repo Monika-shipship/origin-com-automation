@@ -12,8 +12,10 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
 from pydantic import BaseModel, ConfigDict, Field
 
+from .capabilities import capability_report
 from .com.origin_api import OriginController
 from .contracts import ResultEnvelope
+from .data_inspection import DataInspectionError, inspect_data_source
 from .tools.health import health_check
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -180,6 +182,51 @@ def create_server(
     def origin_health_check() -> ResultEnvelope:
         """Inspect Origin registration, executable, Python bitness, and active processes without COM activation."""
         return health_check()
+
+    @strict_tool(name="origin_capabilities")
+    def origin_capabilities(
+        domain: Literal[
+            "session",
+            "data",
+            "connector",
+            "matrix",
+            "image",
+            "analysis",
+            "graph",
+            "project",
+            "workflow",
+        ]
+        | None = None,
+    ) -> ResultEnvelope:
+        """Report verified, supported-unverified, and unsupported Origin capabilities."""
+
+        origin_version = getattr(active_controller(), "origin_version", None)
+        return ResultEnvelope.ok(
+            {
+                "origin_version": origin_version,
+                "capabilities": capability_report(origin_version, domain=domain),
+            },
+            origin_version=origin_version,
+        )
+
+    @strict_tool(name="origin_inspect_data_source")
+    def origin_inspect_data_source(
+        file_path: str,
+        sheet_name: str | None = None,
+        has_header: bool | None = None,
+    ) -> ResultEnvelope:
+        """Profile CSV, TSV, or Excel data without activating Origin."""
+
+        try:
+            return ResultEnvelope.ok(
+                inspect_data_source(
+                    file_path,
+                    sheet_name=sheet_name,
+                    has_header=has_header,
+                )
+            )
+        except DataInspectionError as exc:
+            return ResultEnvelope.fail("DATA_INSPECTION_FAILED", str(exc))
 
     @strict_tool(name="origin_start")
     def origin_start(
