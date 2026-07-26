@@ -1,5 +1,27 @@
 [
   {
+    "id": "worksheet.set-column-values",
+    "domain": "worksheet",
+    "title": "Origin Set Column Values formulas",
+    "summary": "Use csetvalue through origin_set_column_formula to preserve the F(x) formula, Before Formula Script, row range, and recalculation mode. Verify Formula, Script, FormulaRange, SVRM, and output values.",
+    "official_url": "https://www.originlab.com/doc/LabTalk/ref/wkscolformula/",
+    "min_origin": null,
+    "status": "verified",
+    "keywords": ["csetvalue", "F(x)", "column formula", "SVRM"],
+    "tools": ["origin_set_column_formula", "origin_transform_worksheet"]
+  },
+  {
+    "id": "data.linked-import",
+    "domain": "connector",
+    "title": "Linked import from local files",
+    "summary": "The default linked import creates a persistent CSV or Excel Data Connector, verifies its canonical source and hash, and checks destination cells against the source. Snapshot import is explicit.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Data-Connector",
+    "min_origin": "9.6",
+    "status": "verified",
+    "keywords": ["linked import", "Data Connector", "source_mode", "refresh"],
+    "tools": ["origin_import_data", "origin_manage_connector"]
+  },
+  {
     "id": "analysis.op-change",
     "domain": "analysis",
     "title": "Read and run Analysis Operations with op_change",
@@ -28,9 +50,9 @@
     "summary": "Create, inspect, refresh, and disconnect CSV or Excel connectors while preserving an explicit keep-data policy.",
     "official_url": "https://www.originlab.com/doc/Origin-Help/Data-Connector",
     "min_origin": "9.6",
-    "status": "supported_unverified",
+    "status": "verified",
     "keywords": ["Data Connector", "CSV", "Excel", "refresh"],
-    "tools": ["origin_manage_connector"]
+    "tools": ["origin_import_data", "origin_manage_connector"]
   },
   {
     "id": "matrix.matrixbook",
@@ -88,4 +110,3 @@
     "tools": ["origin_plan_figure", "origin_execute_figure", "origin_submit_batch"]
   }
 ]
-

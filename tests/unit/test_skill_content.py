@@ -32,3 +32,10 @@ def test_origin_skill_has_trigger_metadata_and_safe_workflow():
     assert "column_profiles" in text
     assert "system installation template" in text
     assert "Do not call `origin_shutdown` first" in text
+    assert 'source_mode="linked"' in text
+    assert 'source_mode="snapshot"' in text
+    assert "origin_set_column_formula" in text
+    assert "F(x)" in text
+    assert 'backend="origin_native"' in text
+    assert 'backend="python"' in text
+    assert "Never silently fall back" in text

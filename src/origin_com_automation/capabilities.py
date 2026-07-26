@@ -26,6 +26,11 @@ CAPABILITIES: tuple[Capability, ...] = (
     ),
     Capability("data.csv_excel_import", "verified"),
     Capability("data.source_preflight", "verified"),
+    Capability(
+        "data.linked_local_import",
+        "verified",
+        notes="CSV and Excel imports default to persistent local Data Connectors with source hash and cell-profile validation.",
+    ),
     Capability("connector.local_file", "verified", notes="CSV create, refresh, and disconnect on Origin 10.1."),
     Capability("connector.remote_authenticated", "unsupported"),
     Capability("matrix.read_write", "verified", notes="Create, rectangular write, readback, and OPJU reopen on Origin 10.1."),
@@ -33,6 +38,11 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("image.import", "verified", notes="Image Page create, PNG import, dimensions, and OPJU reopen on Origin 10.1."),
     Capability("image.export_convert", "supported_unverified"),
     Capability("analysis.python_structured", "verified"),
+    Capability(
+        "analysis.python_explicit",
+        "verified",
+        notes="Explicit compatibility backend; results are labeled non-recalculating in Origin.",
+    ),
     Capability("analysis.xfunction", "supported_unverified"),
     Capability("analysis.native_operation", "supported_unverified"),
     Capability(
@@ -44,6 +54,16 @@ CAPABILITIES: tuple[Capability, ...] = (
         "analysis.native_operation_fitlr",
         "verified",
         notes="Create, query, change input, recalculate, and verify output on Origin 10.1.",
+    ),
+    Capability(
+        "analysis.native_default_fitlr",
+        "verified",
+        notes="Default linear fit creates an auto-recalculating Origin fitlr Analysis Operation.",
+    ),
+    Capability(
+        "worksheet.origin_formula",
+        "verified",
+        notes="csetvalue F(x) formula, script, range, SVRM, and values verified on Origin 10.1.",
     ),
     Capability("graph.scatter", "verified"),
     Capability("graph.line", "verified"),

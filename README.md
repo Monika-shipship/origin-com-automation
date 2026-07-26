@@ -46,7 +46,7 @@ the result distinguishes verified, supported-unverified, and unsupported behavio
 |---|---|
 | Environment and sessions | `origin_health_check`, `origin_capabilities`, `origin_start`, `origin_recover_session`, `origin_shutdown` |
 | Projects and source safety | `origin_open_project`, `origin_save_project_copy`, `origin_save_and_replace_source`, `origin_close_project`, `origin_list_objects` |
-| Data | `origin_inspect_data_source`, `origin_import_data`, `origin_read_worksheet`, `origin_write_worksheet`, `origin_transform_worksheet`, `origin_manage_connector` |
+| Data | `origin_inspect_data_source`, `origin_import_data`, `origin_read_worksheet`, `origin_write_worksheet`, `origin_set_column_formula`, `origin_transform_worksheet`, `origin_manage_connector` |
 | Native objects | `origin_manage_matrix`, `origin_manage_image`, `origin_manage_project_folder`, `origin_manage_note` |
 | Analysis | `origin_run_analysis`, `origin_run_xfunction`, `origin_list_analysis_operations`, `origin_get_analysis_operation`, `origin_recalculate_analysis`, `origin_manage_analysis_template`, `origin_execute_labtalk` |
 | Graphs | `origin_graph_catalog`, `origin_create_plot`, `origin_create_graph`, `origin_configure_graph`, `origin_manage_graph_layout`, `origin_list_graph_templates`, `origin_apply_graph_template`, `origin_palette_catalog` |
@@ -76,16 +76,21 @@ Successful calls are reused instead of repeated. Adjacent ranges are merged, mul
 
 Failure handling is bounded: a stale object ref permits one refreshed audit and one corrected call; a validation mismatch permits one focused inspection and one targeted correction. If the same failure repeats, the workflow stops and reports the exact blocker. Writes, analyses, saves, exports, timeouts, and RPC failures are never blindly replayed.
 
-For new data, use `target_mode="new_workbook"` and continue only when the returned `column_profiles` confirm the defining X/Y columns. Origin's user-level `Origin.otwu` can contain old long names, data, dimensions, formats, or connectors. The plugin bypasses it with the read-only system installation template, then applies exact dimensions, labels, and column formats after the block write. `target_mode="existing_worksheet"` is explicit and does not reset an existing OPJU worksheet.
+For new data, use `target_mode="new_workbook"` and keep the default `source_mode="linked"`. Continue only when the returned connector state, source hash, and `column_profiles` confirm the defining X/Y columns. Origin's user-level `Origin.otwu` can contain old long names, data, dimensions, formats, or connectors, so the plugin creates the target from the read-only system installation template before attaching the CSV or Excel Data Connector. `source_mode="snapshot"` retains the verified static block-write compatibility path, and `target_mode="existing_worksheet"` remains explicit.
 
 ## Analysis Engine
 
-The structured analysis tool reads explicitly selected Origin worksheet columns and uses
-NumPy/SciPy. Version 0.2 also provides structured X-Function calls with typed range/output/file
-parameters and an explicit unverified-function gate. Native operations created by the plugin can
-be listed, read, and recalculated through stable operation refs. The live Origin 10.1 regression
-covers a recalculating `fitlr` operation; generic X-Functions and specialized analyses retain
-their per-function capability status.
+The default analysis path stays inside Origin. `origin_run_analysis` defaults to
+`backend="origin_native"`, `create_operation=true`, and `recalculate_mode="auto"`; verified
+linear fits invoke `fitlr -r 1` and return a stable Analysis Operation ref. Operations created by
+the plugin can be listed, read, and recalculated. When the exact method or option mapping is not
+verified, the native request fails with the available method list and does not silently run
+NumPy/SciPy or write external results into the project.
+
+`backend="python"` remains an explicit compatibility choice for the broader structured analysis
+catalog. Its response is labeled `editable_in_origin=false` and
+`native_operation_created=false`, with a warning that it does not create a recalculating Origin
+operation.
 
 The plugin never silently changes fit method, branch, range, smoothing window, polynomial degree,
 derivative order, missing-value policy, or normalization rule.
@@ -94,11 +99,12 @@ Analysis selection is explicit: `row_start` and `row_end` are inclusive 0-based 
 
 Supported structured nonlinear models in v0.2 are `exponential` and `gaussian`. Unsupported models return an error instead of selecting a substitute.
 
-Worksheet transformations require an explicit source range and destination policy. Available
-plans cover sort, filter, deduplicate, missing-value fill, transpose, merge/concat, pivot/melt, and
-calculated columns; each route reports dimensions and verifies the destination. Local CSV and
-Excel Data Connectors can be created, inspected, refreshed, and disconnected without turning a
-remote authenticated source into an implicit dependency.
+Worksheet transformations require an explicit source range and destination policy. Sort, filter,
+deduplicate, missing-value fill, transpose, merge/concat, and pivot/melt remain verified
+materialized transforms. A calculated column defaults to the same-sheet Origin-native route and
+retains its `F(x)` formula. `origin_set_column_formula` independently verifies Formula, Before
+Formula Script, FormulaRange, `SVRM`, and calculated values; the previous copied-value behavior
+requires `execution_mode="materialized"`.
 
 ## FigureSpec and Batch Workflows
 
@@ -106,6 +112,10 @@ remote authenticated source into an implicit dependency.
 exact stages, blockers, warnings, resolved paths, and graph capability states. Execution requires
 the same digest, so a changed scientific or destructive request cannot run under an earlier
 approval. The two primary routes are:
+
+FigureSpec includes the same execution policy in its digest: input `source_mode` defaults to
+`linked`, while every analysis defaults to the Origin-native auto-recalculating operation route.
+Changing to snapshot or Python changes the digest and must be approved as a distinct plan.
 
 - `data_to_project`: inspect/import CSV, TSV, or Excel into a clean workbook, analyze, plot, save,
   export, run QA, and shut down.
@@ -132,7 +142,9 @@ LabTalk has no general stdout channel. `origin_execute_labtalk` therefore captur
 {"tool":"origin_start","arguments":{"visible":false,"attach":false}}
 {"tool":"origin_read_worksheet","arguments":{"name":"[WSe2Benchmark]Data","r1":0,"c1":0,"r2":25,"c2":8,"data_format":"auto"}}
 {"tool":"origin_import_data","arguments":{"file_path":"C:\\data\\transfer.xlsx","worksheet_name":"Transfer","sheet_name":"Data","has_header":true,"target_mode":"new_workbook"}}
-{"tool":"origin_run_analysis","arguments":{"worksheet_name":"[Transfer]Sheet1","method":"derivative","x_column":"A","y_column":"B","row_start":120,"row_end":240,"row_order":"reverse","filters":[{"column":"y","operator":"gt","value":0}],"options":{"order":1,"derivative_method":"central"}}}
+{"tool":"origin_set_column_formula","arguments":{"worksheet_ref":"[Transfer]Sheet1","column":"C","formula":"col(A)*col(B)","recalculate_mode":"auto"}}
+{"tool":"origin_run_analysis","arguments":{"worksheet_name":"[Transfer]Sheet1","method":"linear_fit","x_column":"A","y_column":"B"}}
+{"tool":"origin_run_analysis","arguments":{"worksheet_name":"[Transfer]Sheet1","method":"derivative","x_column":"A","y_column":"B","row_start":120,"row_end":240,"row_order":"reverse","filters":[{"column":"y","operator":"gt","value":0}],"options":{"backend":"python","order":1,"derivative_method":"central","create_operation":false,"recalculate_mode":"none"}}}
 {"tool":"origin_create_plot","arguments":{"worksheet_name":"[Transfer]Sheet1","graph_type":"scatter","x_column":"A","y_columns":["B"],"graph_name":"TransferGraph"}}
 {"tool":"origin_create_plot","arguments":{"worksheet_name":"[WSe2Benchmark]Data","graph_type":"scatter","x_column":"A","y_columns":["B"],"label_column":"C","graph_name":"Ion_vs_Lch"}}
 {"tool":"origin_export_graph","arguments":{"graph_name":"[TransferGraph]1","output_path":"C:\\results\\transfer.png","export_format":"png","overwrite":"skip"}}
@@ -205,8 +217,9 @@ codex plugin remove origin-com-automation@personal
 
 ## Verified Scope and Known Limits
 
-- Verified on Origin 10.1.0.178: safe owned-session lifecycle, mixed Excel import/write readback,
-  editable OPJU save/reopen, `fitlr` native operation recalculation, local CSV connector lifecycle,
+- Verified on Origin 10.1.0.178: safe owned-session lifecycle, mixed Excel snapshot/write readback,
+  linked local import, editable `F(x)` formula metadata/value readback, editable OPJU save/reopen,
+  default `fitlr` native operation recalculation, local CSV connector lifecycle,
   Matrix read/write persistence, PNG Image Page import, Notes, Project Folder create/list/rename,
   graph preview pixel metrics, FigureSpec data-to-project execution, and two-item serial batch.
 - Supported-unverified: Image Page export/conversion, Matrix transformations, folder move/delete,

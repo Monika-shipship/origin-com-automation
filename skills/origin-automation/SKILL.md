@@ -10,6 +10,12 @@ preserve the user's scientific choices, and finish through the shortest route th
 the requested result. Prefer one digest-bound FigureSpec execution for a clear end-to-end data or
 restyle job; use focused tools when the task needs exact object-level control.
 
+For new data, preserve editability by default: import with `source_mode="linked"`, create derived
+columns with `origin_set_column_formula` so Origin retains the `F(x)` formula, and analyze with
+`backend="origin_native"`, `create_operation=true`, and `recalculate_mode="auto"`. Static
+`source_mode="snapshot"` and external `backend="python"` are compatibility modes that require an
+explicit user choice. Never silently fall back from an unavailable native route to Python.
+
 ## Operating Contract
 
 Before the first tool call, form a private task contract containing: task route, source, output, exact analysis method, row/range/branch/filter choices, graph type, and requested artifacts. Do not show a planning preamble when these are already clear. Ask only when a missing value is a scientific choice the user must own or when source overwrite needs explicit authorization; choose routine engineering details yourself.
@@ -23,14 +29,14 @@ Choose exactly one primary route and do not mix in diagnostic work unless its tr
 1. **Environment diagnosis:** `origin_health_check`, report the actionable result, stop. Do not activate Origin.
 2. **Read-only active-session inspection/export:** health check, explicit SI/COMSI `origin_start(attach=true)`, targeted audit/read/export, detach with `origin_shutdown`. Never mutate the attached session.
 3. **Existing OPJU modification:** health check, owned start, `origin_open_project` working copy, targeted audit, batch read/write/analysis/plot, verify, save a separate copy, shutdown. Never reset workbook templates or page metadata on this route.
-4. **New data analysis/plot:** health check, owned start, one `origin_import_data(target_mode="new_workbook")`, inspect its `column_profiles`, analysis, plot/configure, export or save, shutdown. The import uses the system installation template instead of the user's customized `Origin.otwu`. Skip project opening and broad object audits unless needed for a returned ref.
+4. **New data analysis/plot:** health check, owned start, one `origin_import_data(target_mode="new_workbook", source_mode="linked")`, inspect its connector state and `column_profiles`, native formula/analysis, plot/configure, export or save, shutdown. The import creates a clean sheet from the system installation template instead of the user's customized `Origin.otwu`, then keeps the CSV/Excel Data Connector attached. Skip project opening and broad object audits unless needed for a returned ref.
 5. **Complete FigureSpec workflow:** use `origin_inspect_data_source` when column roles need
    preflight, then `origin_plan_figure` and one `origin_execute_figure` with the returned digest.
    Use this route when input, analysis choices, plot roles, OPJU output, exports, and QA fit the
    strict schema. Use `origin_submit_batch` for two or more independent items. Do not expand this
    route into the low-level call sequence unless planning reports a specific unsupported feature.
 
-For Matrix, Image Page, Data Connector, native operation, template, folder, or Note work, use the
+For Matrix, Image Page, Data Connector, `F(x)` formula, native operation, template, folder, or Note work, use the
 corresponding focused `origin_manage_*` or native-analysis tool inside route 3 or 4. Call
 `origin_capabilities(domain=...)` once before a specialized or version-sensitive family; do not
 probe by repeatedly executing mutations.
@@ -43,12 +49,13 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 2. Call `origin_start` once. Default to owned, hidden `Origin.Application`; attach only when the user explicitly targets an already active instance.
 3. Open one working copy when a source OPJU is involved.
 4. Run one initial `origin_list_objects` only when stable refs or existing structure are needed. Extract all required workbook, worksheet, graph, layer, dimensions, and plot-source facts from that response.
-5. Read or import the smallest contiguous blocks that contain all required columns. Import and write tools already perform one exact internal readback; inspect `readback_verified`, `column_profiles`, `non_empty_count`, and the returned stable `worksheet_ref` instead of adding a reassurance call. If a defining X/Y column is empty, mismatched, or unconfirmed, stop before analysis or plotting.
-6. Run the exact requested analysis once with explicit row bounds, `row_order`, filters, method, and options. Never substitute a fit, derivative, smoothing, branch, or range.
-7. Create a graph only if it does not exist. Apply binding, axes, scales, styles, categories, and legend together in one `origin_configure_graph` call per final graph. Prefer structured controls over exploratory LabTalk.
-8. Verify only result-defining invariants: record count/values, required column labels, plot X/Y/label sources, axis state, and non-empty artifacts. Require `label_source_status=resolved` when labels are requested.
-9. Run a second `origin_list_objects` only when page structure or plot bindings changed. Analysis-only, formatting-only, and export-only tasks do not need a second audit unless validation fails.
-10. Save/export each requested artifact once, verify it, restore any temporary linkage-test edits, then call `origin_shutdown` and require confirmed exit for an owned session.
+5. Read or import the smallest contiguous blocks that contain all required columns. Import and write tools already perform one exact internal readback; inspect connector state, `readback_verified`, `column_profiles`, `non_empty_count`, and the returned stable `worksheet_ref` instead of adding a reassurance call. If a defining X/Y column is empty, mismatched, or unconfirmed, stop before analysis or plotting.
+6. Add derived columns with `origin_set_column_formula`, or `origin_transform_worksheet(action="calculated_column")`, and require formula, script, range, `SVRM`, and value readback confirmation. Materialize values only after the user explicitly selects `execution_mode="materialized"`.
+7. Run the exact requested analysis once with explicit row bounds, `row_order`, filters, method, and options. Default to an Origin-native Analysis Operation. If the exact method/options are unavailable natively, stop with the capability error; never substitute Python, a fit, derivative, smoothing, branch, or range.
+8. Create a graph only if it does not exist. Apply binding, axes, scales, styles, categories, and legend together in one `origin_configure_graph` call per final graph. Prefer structured controls over exploratory LabTalk.
+9. Verify only result-defining invariants: record count/values, required column labels, formula/operation state, plot X/Y/label sources, axis state, and non-empty artifacts. Require `label_source_status=resolved` when labels are requested.
+10. Run a second `origin_list_objects` only when page structure or plot bindings changed. Analysis-only, formatting-only, and export-only tasks do not need a second audit unless validation fails.
+11. Save/export each requested artifact once, verify it, restore any temporary linkage-test edits, then call `origin_shutdown` and require confirmed exit for an owned session.
 
 ## Call Budget
 
@@ -83,6 +90,8 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - Never mutate an attached session, treat SI/COMSI as owned, infer proxy-PID binding, or terminate Origin by PID.
 - Read mixed ranges with `data_format=auto`; use `categorical_label` for category strings and numeric mode only for intended internal numeric values.
 - Treat `IMPORT_DATA_LOSS`, `IMPORT_VALIDATION_FAILED`, `WORKSHEET_WRITE_REJECTED`, and `WORKSHEET_WRITE_UNCONFIRMED` as hard stops. Row/column dimensions alone never prove data integrity.
+- Keep local CSV/TSV/Excel imports linked unless the user explicitly requests `source_mode="snapshot"`; do not disconnect a successful default connector.
+- Keep calculations in Origin with `F(x)` formulas and native Analysis Operations. Use `backend="python"` only when explicitly requested, label it non-recalculating, and never copy external results back as though they were native operations.
 - Declare LabTalk outputs with `result_numeric_variables` or `result_string_variables`; a valid empty string remains an empty string.
 - Use `categorical_style` and native categorical legends for mapped markers; bind labels directly with `label_column`.
 - X-Functions use typed parameters and declared outputs. Set the unverified-function opt-in only
