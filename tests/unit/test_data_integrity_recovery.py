@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import csv
+from hashlib import sha256
 import time
 from types import SimpleNamespace
 
@@ -191,6 +193,7 @@ def test_xlsx_import_profiles_every_column_and_preserves_ion_values(tmp_path):
         worksheet_name="WSe2Benchmark",
         sheet_name="p-WSe2-only",
         has_header=True,
+        source_mode="snapshot",
     )
 
     assert result.success is True
@@ -213,6 +216,90 @@ def test_xlsx_import_profiles_every_column_and_preserves_ion_values(tmp_path):
     assert app.page.LongName == "WSe2Benchmark"
     assert result.data["template_reset"]["initial_rows"] == 162
     assert result.data["template_reset"]["initial_columns"] == 9
+
+
+def test_default_import_uses_data_connector_without_static_block_write(tmp_path):
+    source = tmp_path / "linked.csv"
+    source.write_text("x,y\n1,2\n3,4\n", encoding="utf-8")
+
+    class LinkedWorksheet(Worksheet):
+        def __init__(self):
+            super().__init__()
+            self.connected = False
+            self.source = ""
+            self.static_set_calls = 0
+            self.refreshes = 0
+
+        def SetData(self, rows, row, column):
+            self.static_set_calls += 1
+            return super().SetData(rows, row, column)
+
+        def Execute(self, script):
+            if "wbook.dc.add" in script:
+                self.connected = True
+            elif "wbook.dc.remove" in script:
+                self.connected = False
+            return 1
+
+        def DoMethod(self, name, argument):
+            if name == "DC.Import":
+                self.refreshes += 1
+                with open(self.source, encoding="utf-8", newline="") as handle:
+                    rows = list(csv.reader(handle))
+                labels, values = rows[0], rows[1:]
+                self.Cols = len(labels)
+                self.Rows = len(values)
+                for index, label in enumerate(labels):
+                    column = self.Columns.Item(index)
+                    column.LongName = label
+                    column.values = [float(row[index]) for row in values]
+            return 1
+
+        def GetNumProp(self, name):
+            return int(name == "HasDC" and self.connected)
+
+        def GetStrProp(self, name):
+            return self.source if name == "DC.Source" else ""
+
+        def SetStrProp(self, name, value):
+            if name == "DC.Source":
+                self.source = value
+            return 1
+
+    class LinkedApp(DataApp):
+        def __init__(self):
+            super().__init__()
+            self.sheet = LinkedWorksheet()
+            self.sheet.Parent = self.page
+
+        def LTVar(self, name):
+            return 1
+
+        def Execute(self, script):
+            return 1
+
+    app = LinkedApp()
+    controller = started_controller(app)
+
+    result = controller.import_data(
+        file_path=str(source),
+        worksheet_name="LinkedData",
+        has_header=True,
+        source_mode="linked",
+    )
+
+    assert result.success is True
+    assert result.data["source_mode"] == "linked"
+    assert result.data["worksheet_ref"] == "[LinkedData]Sheet1"
+    assert result.data["connector"]["connected"] is True
+    assert result.data["connector"]["source"] == str(source.resolve())
+    assert result.data["source_sha256"] == sha256(source.read_bytes()).hexdigest()
+    assert result.data["rows"] == 2
+    assert result.data["columns"] == 2
+    assert result.data["column_profiles"][1]["first_value"] == 2.0
+    assert result.data["column_profiles"][1]["last_value"] == 4.0
+    assert app.sheet.static_set_calls == 0
+    assert app.sheet.refreshes == 1
 
 
 def test_system_origin_template_takes_precedence_over_user_template(tmp_path):

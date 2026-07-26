@@ -8,6 +8,19 @@ from pathlib import Path
 from .validation import ObjectPlanError, stable_ref
 
 
+def connector_type_for_source(source: str | Path) -> str:
+    """Return the Origin local-file connector family for a source path."""
+
+    suffix = Path(source).suffix.lower()
+    if suffix in {".csv", ".tsv"}:
+        return "csv"
+    if suffix in {".xls", ".xlsx", ".xlsm"}:
+        return "excel"
+    raise ObjectPlanError(
+        f"source extension is not connector-supported: {suffix or '<none>'}"
+    )
+
+
 @dataclass(frozen=True)
 class ConnectorPlan:
     action: str
@@ -58,4 +71,3 @@ def build_connector_plan(
         keep_data=keep_data,
         verification="connector_state_and_source",
     )
-

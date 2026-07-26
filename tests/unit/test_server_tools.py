@@ -32,6 +32,10 @@ class FakeController:
         self.calls.append(("read_worksheet", {"name": name, **kwargs}))
         return ResultEnvelope.ok({"name": name, **kwargs})
 
+    def import_data(self, **kwargs):
+        self.calls.append(("import_data", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
     def execute_labtalk(self, **kwargs):
         self.calls.append(("execute_labtalk", kwargs))
         return ResultEnvelope.ok(kwargs)
@@ -199,6 +203,30 @@ def test_source_and_analysis_schemas_default_to_editable_origin_workflows():
     assert properties["backend"]["default"] == "origin_native"
     assert properties["create_operation"]["default"] is True
     assert properties["recalculate_mode"]["default"] == "auto"
+
+
+def test_import_tool_forwards_linked_source_mode_by_default():
+    controller = FakeController()
+    server = create_server(controller=controller)
+
+    result = asyncio.run(
+        server.call_tool("origin_import_data", {"file_path": "C:\\data\\input.csv"})
+    )
+
+    assert result[1]["success"] is True
+    assert controller.calls == [
+        (
+            "import_data",
+            {
+                "file_path": "C:\\data\\input.csv",
+                "worksheet_name": None,
+                "sheet_name": None,
+                "has_header": None,
+                "target_mode": "new_workbook",
+                "source_mode": "linked",
+            },
+        )
+    ]
 
 
 def test_graph_expansion_tools_have_explicit_roles_and_safety_gates():

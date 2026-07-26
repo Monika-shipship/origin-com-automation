@@ -1,6 +1,9 @@
 import pytest
 
-from origin_com_automation.objects.connectors import build_connector_plan
+from origin_com_automation.objects.connectors import (
+    build_connector_plan,
+    connector_type_for_source,
+)
 from origin_com_automation.objects.images import build_image_plan
 from origin_com_automation.objects.matrices import build_matrix_plan
 from origin_com_automation.objects.validation import ObjectPlanError
@@ -35,6 +38,15 @@ def test_connector_disconnect_requires_explicit_keep_data_policy():
         action="disconnect", worksheet_ref="[Book1]Data", keep_data=True
     )
     assert plan.keep_data is True
+
+
+def test_connector_type_is_derived_from_supported_local_source_extensions(tmp_path):
+    assert connector_type_for_source(tmp_path / "data.csv") == "csv"
+    assert connector_type_for_source(tmp_path / "data.tsv") == "csv"
+    assert connector_type_for_source(tmp_path / "data.xlsx") == "excel"
+    assert connector_type_for_source(tmp_path / "data.xlsm") == "excel"
+    with pytest.raises(ObjectPlanError, match="connector-supported"):
+        connector_type_for_source(tmp_path / "data.json")
 
 
 def test_matrix_write_requires_rectangular_finite_block():

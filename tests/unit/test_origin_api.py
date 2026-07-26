@@ -759,7 +759,11 @@ def test_import_legacy_xls_uses_xlrd(monkeypatch, tmp_path):
         SimpleNamespace(open_workbook=lambda path, on_demand: fake_book),
     )
 
-    result = controller.import_data(file_path=str(source), worksheet_name="Legacy")
+    result = controller.import_data(
+        file_path=str(source),
+        worksheet_name="Legacy",
+        source_mode="snapshot",
+    )
 
     assert result.success is True
     assert [app.Columns.Item(index).GetData(0, 0, 0)[0][0] for index in range(2)] == [1, 2]

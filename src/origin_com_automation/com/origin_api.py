@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import inspect
 import json
 import logging
@@ -34,7 +35,7 @@ from ..native.operations import (
     recalculate_operation,
 )
 from ..native.xfunctions import build_xfunction_plan
-from ..objects.connectors import build_connector_plan
+from ..objects.connectors import build_connector_plan, connector_type_for_source
 from ..objects.images import build_image_plan
 from ..objects.matrices import build_matrix_plan
 from ..objects.validation import ObjectPlanError
@@ -3768,7 +3769,7 @@ class OriginController:
         sheet_name: str | None = None,
         has_header: bool | None = None,
         target_mode: str = "new_workbook",
-        source_mode: str = "snapshot",
+        source_mode: str = "linked",
     ) -> ResultEnvelope:
         guard = self._guard_mutation()
         if guard:
@@ -3783,14 +3784,16 @@ class OriginController:
                 "INVALID_IMPORT_SOURCE_MODE",
                 "source_mode must be linked or snapshot",
             )
-        if source_mode == "linked":
-            return ResultEnvelope.fail(
-                "LINKED_IMPORT_UNAVAILABLE",
-                "Linked import is not available in this controller build",
-            )
         source = Path(file_path).expanduser().resolve()
         if not source.is_file():
             return ResultEnvelope.fail("INPUT_NOT_FOUND", f"Data file does not exist: {source}")
+        try:
+            source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+        except OSError as exc:
+            return ResultEnvelope.fail(
+                _exception_error_code(exc),
+                f"Data source could not be read: {source}",
+            )
         try:
             if source.suffix.lower() in {".xlsx", ".xlsm"}:
                 from openpyxl import load_workbook
@@ -3828,6 +3831,242 @@ class OriginController:
         target_name = worksheet_name or source.stem
 
         rectangular, width = _rectangular_values(data_rows)
+
+        if source_mode == "linked":
+            try:
+                connector_type = connector_type_for_source(source)
+            except ObjectPlanError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+
+            def prepare_linked_target() -> dict[str, Any]:
+                app = self._require_app()
+                page = None
+                created_name: str | None = None
+                template_name = None
+                system_template = False
+                if target_mode == "new_workbook":
+                    template_name, system_template = _system_worksheet_template(app)
+                    created_name = app.CreatePage(
+                        ORIGIN_PAGE_WORKSHEET,
+                        target_name,
+                        template_name,
+                        ORIGIN_CREATE_HIDDEN,
+                    )
+                    sheet = app.FindWorksheet(created_name)
+                    worksheet_pages = _safe_attr(app, "WorksheetPages")
+                    if worksheet_pages is not None:
+                        try:
+                            page = worksheet_pages.Item(created_name)
+                        except Exception:
+                            page = None
+                else:
+                    sheet = _resolve_worksheet(app, target_name)
+                if sheet is None:
+                    raise LookupError(f"Origin worksheet was not created: {target_name}")
+                sheet_name_actual = str(_safe_attr(sheet, "Name", "Sheet1"))
+                page_name = str(created_name or target_name)
+                worksheet_ref = (
+                    f"[{page_name}]{sheet_name_actual}" if created_name else target_name
+                )
+                if target_mode == "new_workbook":
+                    try:
+                        sheet.LongName = ""
+                    except Exception:
+                        pass
+                    if page is not None:
+                        try:
+                            page.LongName = target_name
+                        except Exception:
+                            pass
+                return {
+                    "worksheet_ref": worksheet_ref,
+                    "workbook": page_name if created_name else None,
+                    "worksheet_name": sheet_name_actual,
+                    "template_reset": {
+                        "applied": target_mode == "new_workbook",
+                        "template_name": template_name,
+                        "system_template": system_template,
+                        "data_connection_reset": "new_linked_connector",
+                    },
+                }
+
+            prepared = self._submit(
+                prepare_linked_target, stage="prepare_linked_import"
+            )
+            if not prepared.success:
+                return prepared
+            connector_result = self.manage_connector(
+                action="create",
+                worksheet_ref=str(prepared.data["worksheet_ref"]),
+                source=str(source),
+                connector_type=connector_type,
+                keep_connector=True,
+            )
+            if not connector_result.success:
+                return ResultEnvelope.fail(
+                    connector_result.error_code or "CONNECTOR_IMPORT_UNCONFIRMED",
+                    connector_result.error_message
+                    or "Origin Data Connector import could not be confirmed",
+                    data={
+                        "source_mode": "linked",
+                        "worksheet_ref": prepared.data["worksheet_ref"],
+                        "connector": connector_result.data,
+                    },
+                    warnings=connector_result.warnings,
+                )
+            actual_ref = str(
+                connector_result.data.get("worksheet_ref")
+                or prepared.data["worksheet_ref"]
+            )
+
+            def validate_linked_import() -> ResultEnvelope:
+                app = self._require_app()
+                try:
+                    current_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+                except OSError:
+                    return ResultEnvelope.fail(
+                        "DATA_SOURCE_UNAVAILABLE",
+                        "Linked source became unavailable during import; cached Origin data was preserved",
+                        data={
+                            "source_mode": "linked",
+                            "worksheet_ref": actual_ref,
+                            "cached_data_preserved": True,
+                        },
+                    )
+                if current_source_sha256 != source_sha256:
+                    return ResultEnvelope.fail(
+                        "DATA_SOURCE_CHANGED_DURING_IMPORT",
+                        "Linked source changed before import validation completed",
+                        data={
+                            "source_mode": "linked",
+                            "worksheet_ref": actual_ref,
+                            "expected_source_sha256": source_sha256,
+                            "actual_source_sha256": current_source_sha256,
+                            "cached_data_preserved": True,
+                        },
+                    )
+                sheet = _resolve_worksheet(app, actual_ref)
+                source_columns = [
+                    [item[index] for item in rectangular] for index in range(width)
+                ]
+                profiles: list[dict[str, Any]] = []
+                mismatched_columns: list[int] = []
+                empty_destination_columns: list[int] = []
+                label_mismatches: list[int] = []
+                for index, source_values in enumerate(source_columns):
+                    target_column = _worksheet_column(sheet, index)
+                    destination_values = _column_variant_values(
+                        target_column, 0, len(rectangular) - 1
+                    )
+                    destination_values = (
+                        destination_values[: len(rectangular)]
+                        + [None]
+                        * max(0, len(rectangular) - len(destination_values))
+                    )
+                    source_profile = _column_profile(source_values)
+                    destination_profile = _column_profile(destination_values)
+                    value_mismatches = [
+                        row_index
+                        for row_index, (expected, actual) in enumerate(
+                            zip(source_values, destination_values, strict=True)
+                        )
+                        if not _cells_equal(expected, actual)
+                    ]
+                    if value_mismatches:
+                        mismatched_columns.append(index)
+                    if (
+                        source_profile["non_empty_count"] > 0
+                        and destination_profile["non_empty_count"] == 0
+                    ):
+                        empty_destination_columns.append(index)
+                    expected_label = (
+                        column_labels[index]
+                        if column_labels and index < len(column_labels)
+                        else ""
+                    )
+                    actual_label = str(_safe_attr(target_column, "LongName", ""))
+                    if expected_label and actual_label != expected_label:
+                        label_mismatches.append(index)
+                    non_empty_values = [
+                        _normalize_cell(value)
+                        for value in destination_values
+                        if not _is_missing_cell(value)
+                    ]
+                    profiles.append(
+                        {
+                            "index": index,
+                            "name": str(_safe_attr(target_column, "Name", "")),
+                            "label": actual_label,
+                            "source": source_profile,
+                            "destination": destination_profile,
+                            "first_value": (
+                                non_empty_values[0] if non_empty_values else None
+                            ),
+                            "last_value": (
+                                non_empty_values[-1] if non_empty_values else None
+                            ),
+                            "mismatch_rows": value_mismatches[:10],
+                        }
+                    )
+                data = {
+                    "worksheet": target_name,
+                    "worksheet_ref": actual_ref,
+                    "workbook": prepared.data.get("workbook"),
+                    "worksheet_name": str(_safe_attr(sheet, "Name", "")),
+                    "rows": len(rectangular),
+                    "columns": width,
+                    "column_labels": column_labels,
+                    "header_mode": "explicit" if has_header is not None else "auto",
+                    "target_mode": target_mode,
+                    "source_mode": "linked",
+                    "source_sha256": source_sha256,
+                    "connector": {
+                        key: connector_result.data.get(key)
+                        for key in (
+                            "worksheet_ref",
+                            "source",
+                            "connector_type",
+                            "connected",
+                            "refresh_count",
+                            "interface",
+                        )
+                    },
+                    "column_profiles": profiles,
+                    "non_empty_count": sum(
+                        item["destination"]["non_empty_count"] for item in profiles
+                    ),
+                    "template_reset": prepared.data.get("template_reset"),
+                    "cached_data_preserved": True,
+                    "stage": "validate_linked_import",
+                }
+                if empty_destination_columns:
+                    return ResultEnvelope.fail(
+                        "IMPORT_DATA_LOSS",
+                        "One or more populated source columns became empty in Origin",
+                        data={**data, "failed_columns": empty_destination_columns},
+                    )
+                if mismatched_columns or label_mismatches:
+                    return ResultEnvelope.fail(
+                        "CONNECTOR_IMPORT_UNCONFIRMED",
+                        "Connected Origin worksheet did not match the selected source data",
+                        data={
+                            **data,
+                            "failed_columns": mismatched_columns,
+                            "label_mismatches": label_mismatches,
+                        },
+                    )
+                return ResultEnvelope.ok(data)
+
+            linked_result = self._submit(
+                validate_linked_import, stage="validate_linked_import"
+            )
+            if not linked_result.success:
+                return linked_result
+            return ResultEnvelope.ok(
+                linked_result.data,
+                artifacts=[Artifact(str(source), "linked_input_data")],
+                duration_ms=linked_result.duration_ms,
+            )
 
         def import_rows() -> ResultEnvelope:
             app = self._require_app()
@@ -4022,6 +4261,7 @@ class OriginController:
                 "column_labels_applied": labels_applied,
                 "header_mode": "explicit" if has_header is not None else "auto",
                 "target_mode": target_mode,
+                "source_mode": "snapshot",
                 "set_data_returns": set_data_returns,
                 "column_profiles": profiles,
                 "non_empty_count": sum(
