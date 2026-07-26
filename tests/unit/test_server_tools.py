@@ -105,6 +105,24 @@ def test_server_registers_the_complete_origin_tool_surface():
     assert "result_string_variables" in schemas["origin_execute_labtalk"]
     assert "allow_source_overwrite" in schemas["origin_save_and_replace_source"]
     assert "initial_guess" in schemas["origin_run_analysis"]
+    analysis_schema = json.loads(schemas["origin_run_analysis"])["properties"]["options"]["anyOf"][0]
+    assert analysis_schema["additionalProperties"] is False
+    for option_name in [
+        "backend",
+        "interpolation_kind",
+        "interpolation_points",
+        "normalization_method",
+        "sample_spacing",
+        "correlation_method",
+        "alternative",
+        "groups",
+        "components",
+        "bounds",
+        "parameter_names",
+        "create_operation",
+        "recalculate_mode",
+    ]:
+        assert option_name in analysis_schema["properties"]
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
 
 

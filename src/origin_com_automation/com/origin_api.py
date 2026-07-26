@@ -23,7 +23,7 @@ from uuid import uuid4
 
 from ..contracts import Artifact, ResultEnvelope
 from ..config import PluginConfig
-from ..native.common import NativeValidationError
+from ..native.common import NativeValidationError, RangeRef
 from ..native.operations import (
     AnalysisOperationRegistry,
     build_analysis_template_plan,
@@ -3373,7 +3373,12 @@ class OriginController:
         row_order: str = "as_is",
     ) -> ResultEnvelope:
         try:
-            build_analysis_request(method=method, x_column=str(x_column), y_column=str(y_column), options=options)
+            request = build_analysis_request(
+                method=method,
+                x_column=str(x_column),
+                y_column=str(y_column),
+                options=options,
+            )
         except ValueError as exc:
             return ResultEnvelope.fail("INVALID_ANALYSIS_REQUEST", str(exc))
         if row_start < 0 or (row_end != -1 and row_end < row_start):
@@ -3390,6 +3395,70 @@ class OriginController:
             normalized_filters = _normalize_analysis_filters(filters)
         except (KeyError, TypeError, ValueError) as exc:
             return ResultEnvelope.fail("INVALID_ANALYSIS_SELECTION", str(exc))
+
+        backend = str(request.options.get("backend", "python"))
+        if backend == "origin_native":
+            guard = self._guard_mutation()
+            if guard:
+                return guard
+            if row_start != 0 or row_end != -1 or normalized_filters or row_order != "as_is":
+                return ResultEnvelope.fail(
+                    "NATIVE_ANALYSIS_SELECTION_UNSUPPORTED",
+                    "Origin-native analysis currently requires the full explicit columns with no filters or row reordering",
+                )
+            native_options = {
+                key: value
+                for key, value in request.options.items()
+                if key not in {"backend", "create_operation", "recalculate_mode"}
+            }
+            create_operation = bool(request.options.get("create_operation", False))
+            recalculate_mode = str(request.options.get("recalculate_mode", "none"))
+            worksheet_ref = RangeRef(worksheet_name).value
+            try:
+                if method == "linear_fit" and not native_options:
+                    plan = build_xfunction_plan(
+                        "fitlr",
+                        {
+                            "ix": RangeRef(
+                                f"{worksheet_ref}!({x_column},{y_column})"
+                            )
+                        },
+                        create_operation=create_operation,
+                        recalculate_mode=recalculate_mode,
+                    )
+                elif method == "fft" and set(native_options) <= {"sample_spacing"}:
+                    if native_options.get("sample_spacing", 1.0) != 1.0:
+                        return ResultEnvelope.fail(
+                            "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
+                            "Origin-native FFT sample_spacing mapping is not yet verified",
+                        )
+                    plan = build_xfunction_plan(
+                        "fft1",
+                        {
+                            "ix": RangeRef(f"{worksheet_ref}!{x_column}"),
+                            "iy": RangeRef(f"{worksheet_ref}!{y_column}"),
+                        },
+                        create_operation=create_operation,
+                        recalculate_mode=recalculate_mode,
+                    )
+                else:
+                    return ResultEnvelope.fail(
+                        "NATIVE_ANALYSIS_UNSUPPORTED",
+                        f"No verified Origin-native mapping is available for {method} with these options",
+                    )
+            except NativeValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+
+            def execute_native() -> ResultEnvelope:
+                try:
+                    data = execute_xfunction_plan(
+                        self._require_app(), plan, self._analysis_operations
+                    )
+                except NativeValidationError as exc:
+                    return ResultEnvelope.fail(exc.code, str(exc))
+                return ResultEnvelope.ok({**data, "backend": "origin_native"})
+
+            return self._submit(execute_native, stage=f"native_analysis_{method}")
 
         def analyze() -> dict[str, Any]:
             app = self._require_app()

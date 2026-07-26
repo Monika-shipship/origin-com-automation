@@ -15,6 +15,16 @@ SUPPORTED_ANALYSES = {
     "derivative",
     "peak_analysis",
     "nonlinear_fit",
+    "integration",
+    "interpolation",
+    "normalization",
+    "fft",
+    "correlation",
+    "one_sample_ttest",
+    "two_sample_ttest",
+    "paired_ttest",
+    "one_way_anova",
+    "pca",
 }
 ALLOWED_OPTIONS = {
     "descriptive_statistics": set(),
@@ -23,7 +33,23 @@ ALLOWED_OPTIONS = {
     "smooth": {"window", "polyorder"},
     "derivative": {"order", "derivative_method", "edge_order"},
     "peak_analysis": {"prominence", "distance", "height"},
-    "nonlinear_fit": {"model", "initial_guess", "maxfev"},
+    "nonlinear_fit": {
+        "model",
+        "initial_guess",
+        "maxfev",
+        "bounds",
+        "parameter_names",
+    },
+    "integration": set(),
+    "interpolation": {"interpolation_kind", "interpolation_points"},
+    "normalization": {"normalization_method"},
+    "fft": {"sample_spacing"},
+    "correlation": {"correlation_method"},
+    "one_sample_ttest": {"population_mean", "alternative"},
+    "two_sample_ttest": {"equal_variance", "alternative"},
+    "paired_ttest": {"alternative"},
+    "one_way_anova": {"groups"},
+    "pca": {"components", "standardize"},
 }
 
 
@@ -47,7 +73,8 @@ def build_analysis_request(
     if not x_column.strip() or not y_column.strip():
         raise ValueError("x_column and y_column are required")
     normalized_options = dict(options or {})
-    unknown = sorted(set(normalized_options) - ALLOWED_OPTIONS[method])
+    common_options = {"backend", "create_operation", "recalculate_mode"}
+    unknown = sorted(set(normalized_options) - (ALLOWED_OPTIONS[method] | common_options))
     if unknown:
         raise ValueError(f"Unsupported {method} options: {', '.join(unknown)}")
     return AnalysisRequest(
@@ -83,7 +110,14 @@ def run_analysis_data(
         options=options,
     )
     x, y = _numeric_arrays(x_values, y_values)
-    opts = request.options
+    opts = {
+        key: value
+        for key, value in request.options.items()
+        if key not in {"create_operation", "recalculate_mode"}
+    }
+    backend = str(opts.get("backend", "python"))
+    if backend != "python":
+        raise ValueError("run_analysis_data only executes the python backend")
 
     if method == "descriptive_statistics":
         return {
@@ -93,6 +127,185 @@ def run_analysis_data(
             "std": float(np.std(y, ddof=1)) if y.size > 1 else 0.0,
             "min": float(np.min(y)),
             "max": float(np.max(y)),
+        }
+
+    if method == "integration":
+        if x.size < 2:
+            raise ValueError("integration requires at least two samples")
+        return {
+            "method": "trapezoid",
+            "area": float(np.trapezoid(y, x)),
+            "sample_count": int(x.size),
+            "backend": backend,
+        }
+
+    if method == "interpolation":
+        from scipy.interpolate import interp1d
+
+        if x.size < 2 or np.any(np.diff(x) <= 0):
+            raise ValueError("interpolation x values must be strictly increasing")
+        kind = str(opts.get("interpolation_kind", "linear"))
+        if kind not in {"linear", "nearest", "cubic"}:
+            raise ValueError("interpolation_kind must be linear, nearest, or cubic")
+        points = opts.get("interpolation_points")
+        if not isinstance(points, list) or not points:
+            raise ValueError("interpolation_points must be a non-empty list")
+        requested = np.asarray([float(value) for value in points], dtype=float)
+        if not np.isfinite(requested).all():
+            raise ValueError("interpolation_points must be finite")
+        if np.any(requested < x[0]) or np.any(requested > x[-1]):
+            raise ValueError("interpolation_points must stay inside the selected x range")
+        if kind == "cubic" and x.size < 4:
+            raise ValueError("cubic interpolation requires at least four samples")
+        interpolated = interp1d(x, y, kind=kind)(requested)
+        return {
+            "x": requested.tolist(),
+            "interpolated": [float(value) for value in interpolated],
+            "interpolation_kind": kind,
+            "backend": backend,
+        }
+
+    if method == "normalization":
+        normalization_method = str(opts.get("normalization_method", "min_max"))
+        if normalization_method == "min_max":
+            scale = float(np.max(y) - np.min(y))
+            if scale == 0:
+                raise ValueError("min_max normalization requires a non-constant y range")
+            normalized = (y - np.min(y)) / scale
+        elif normalization_method == "z_score":
+            if y.size < 2:
+                raise ValueError("z_score normalization requires at least two samples")
+            scale = float(np.std(y, ddof=1))
+            if scale == 0:
+                raise ValueError("z_score normalization requires non-constant y values")
+            normalized = (y - np.mean(y)) / scale
+        elif normalization_method == "area":
+            area = float(np.trapezoid(y, x))
+            if area == 0:
+                raise ValueError("area normalization requires a non-zero signed area")
+            normalized = y / area
+        else:
+            raise ValueError("normalization_method must be min_max, z_score, or area")
+        return {
+            "x": x.tolist(),
+            "normalized": [float(value) for value in normalized],
+            "normalization_method": normalization_method,
+            "backend": backend,
+        }
+
+    if method == "fft":
+        sample_spacing = float(opts.get("sample_spacing", 1.0))
+        if sample_spacing <= 0 or not np.isfinite(sample_spacing):
+            raise ValueError("sample_spacing must be a positive finite number")
+        spectrum = np.fft.fft(y)
+        inverse = np.fft.ifft(spectrum)
+        return {
+            "frequency": np.fft.fftfreq(y.size, d=sample_spacing).tolist(),
+            "spectrum_real": spectrum.real.tolist(),
+            "spectrum_imag": spectrum.imag.tolist(),
+            "magnitude": np.abs(spectrum).tolist(),
+            "inverse": inverse.real.tolist(),
+            "sample_spacing": sample_spacing,
+            "backend": backend,
+        }
+
+    if method == "correlation":
+        from scipy import stats
+
+        if x.size < 3:
+            raise ValueError("correlation requires at least three paired samples")
+        correlation_method = str(opts.get("correlation_method", "pearson"))
+        if correlation_method == "pearson":
+            result = stats.pearsonr(x, y)
+        elif correlation_method == "spearman":
+            result = stats.spearmanr(x, y)
+        else:
+            raise ValueError("correlation_method must be pearson or spearman")
+        return {
+            "correlation_method": correlation_method,
+            "coefficient": float(result.statistic),
+            "p_value": float(result.pvalue),
+            "sample_count": int(x.size),
+            "backend": backend,
+        }
+
+    if method in {"one_sample_ttest", "two_sample_ttest", "paired_ttest"}:
+        from scipy import stats
+
+        alternative = str(opts.get("alternative", "two-sided"))
+        if alternative not in {"two-sided", "less", "greater"}:
+            raise ValueError("alternative must be two-sided, less, or greater")
+        if method == "one_sample_ttest":
+            population_mean = float(opts.get("population_mean", 0.0))
+            result = stats.ttest_1samp(y, popmean=population_mean, alternative=alternative)
+            extra = {"population_mean": population_mean, "paired": False}
+        elif method == "two_sample_ttest":
+            equal_variance = bool(opts.get("equal_variance", False))
+            result = stats.ttest_ind(
+                x,
+                y,
+                equal_var=equal_variance,
+                alternative=alternative,
+            )
+            extra = {"equal_variance": equal_variance, "paired": False}
+        else:
+            result = stats.ttest_rel(x, y, alternative=alternative)
+            extra = {"paired": True}
+        return {
+            "statistic": float(result.statistic),
+            "p_value": float(result.pvalue),
+            "alternative": alternative,
+            "backend": backend,
+            **extra,
+        }
+
+    if method == "one_way_anova":
+        from scipy import stats
+
+        raw_groups = opts.get("groups")
+        if not isinstance(raw_groups, list) or len(raw_groups) < 2:
+            raise ValueError("one_way_anova requires at least two explicit groups")
+        groups: list[np.ndarray] = []
+        for group in raw_groups:
+            values = np.asarray(group, dtype=float)
+            if values.size < 2 or not np.isfinite(values).all():
+                raise ValueError("every ANOVA group must contain at least two finite values")
+            groups.append(values)
+        result = stats.f_oneway(*groups)
+        return {
+            "statistic": float(result.statistic),
+            "p_value": float(result.pvalue),
+            "group_count": len(groups),
+            "group_sizes": [int(group.size) for group in groups],
+            "backend": backend,
+        }
+
+    if method == "pca":
+        matrix = np.column_stack((x, y))
+        components = int(opts.get("components", 2))
+        if components < 1 or components > min(matrix.shape):
+            raise ValueError("components must be between 1 and the selected matrix rank")
+        standardize = bool(opts.get("standardize", True))
+        centered = matrix - np.mean(matrix, axis=0)
+        if standardize:
+            scale = np.std(centered, axis=0, ddof=1)
+            if np.any(scale == 0):
+                raise ValueError("PCA standardization requires non-constant columns")
+            centered = centered / scale
+        _, singular_values, vt = np.linalg.svd(centered, full_matrices=False)
+        explained = singular_values**2 / max(matrix.shape[0] - 1, 1)
+        total = float(np.sum(explained))
+        ratios = explained / total if total else np.zeros_like(explained)
+        selected_vectors = vt[:components]
+        scores = centered @ selected_vectors.T
+        return {
+            "components": selected_vectors.tolist(),
+            "scores": scores.tolist(),
+            "explained_variance": explained[:components].tolist(),
+            "explained_variance_ratio": ratios[:components].tolist(),
+            "component_count": components,
+            "standardize": standardize,
+            "backend": backend,
         }
 
     if method in {"linear_fit", "polynomial_fit"}:
@@ -191,6 +404,7 @@ def run_analysis_data(
                 key: [float(value) for value in values]
                 for key, values in properties.items()
             },
+            "backend": backend,
         }
 
     if method == "nonlinear_fit":
@@ -210,13 +424,45 @@ def run_analysis_data(
         else:
             raise ValueError("nonlinear model must be exponential or gaussian")
         initial = opts.get("initial_guess", default_guess)
-        params, covariance = curve_fit(model, x, y, p0=initial, maxfev=int(opts.get("maxfev", 10000)))
+        raw_bounds = opts.get("bounds", (-np.inf, np.inf))
+        if (
+            isinstance(raw_bounds, list)
+            and len(raw_bounds) == 2
+            and all(isinstance(item, list) for item in raw_bounds)
+        ):
+            bounds = (raw_bounds[0], raw_bounds[1])
+        elif raw_bounds == (-np.inf, np.inf):
+            bounds = raw_bounds
+        else:
+            raise ValueError("bounds must contain explicit lower and upper lists")
+        params, covariance = curve_fit(
+            model,
+            x,
+            y,
+            p0=initial,
+            bounds=bounds,
+            maxfev=int(opts.get("maxfev", 10000)),
+        )
         fitted = model(x, *params)
+        parameter_names = opts.get("parameter_names")
+        if parameter_names is None:
+            parameter_names = (
+                ["a", "b", "c"]
+                if model_name == "exponential"
+                else ["amplitude", "center", "sigma", "offset"]
+            )
+        if len(parameter_names) != len(params):
+            raise ValueError("parameter_names must match the fitted parameter count")
         return {
             "model": model_name,
             "parameters": [float(value) for value in params],
+            "named_parameters": {
+                str(name): float(value)
+                for name, value in zip(parameter_names, params, strict=True)
+            },
             "fitted": [float(value) for value in fitted],
             "covariance": covariance.tolist(),
+            "backend": backend,
         }
 
     raise ValueError(f"Unsupported Origin analysis method: {method}")

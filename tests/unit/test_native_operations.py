@@ -240,3 +240,42 @@ def test_controller_returns_stable_validation_error_for_bad_native_request():
 
     assert result.success is False
     assert result.error_code == "NATIVE_VALIDATION_FAILED"
+
+
+def test_controller_routes_verified_native_linear_fit_without_python_fallback():
+    app = NativeApp()
+    controller = owned_controller(app)
+
+    result = controller.run_analysis(
+        worksheet_name="[Book1]Data",
+        method="linear_fit",
+        x_column="A",
+        y_column="B",
+        options={
+            "backend": "origin_native",
+            "create_operation": True,
+            "recalculate_mode": "auto",
+        },
+    )
+
+    assert result.success is True
+    assert result.data["backend"] == "origin_native"
+    assert result.data["operation_ref"].startswith("op://fitlr/")
+    assert app.scripts == [
+        "fitlr ix:=[Book1]Data!(A,B) recalculate:=1;"
+    ]
+
+
+def test_controller_rejects_unmapped_native_analysis_method():
+    controller = owned_controller(NativeApp())
+
+    result = controller.run_analysis(
+        worksheet_name="[Book1]Data",
+        method="pca",
+        x_column="A",
+        y_column="B",
+        options={"backend": "origin_native"},
+    )
+
+    assert result.success is False
+    assert result.error_code == "NATIVE_ANALYSIS_UNSUPPORTED"

@@ -82,6 +82,7 @@ def _decode_native_parameter(value: NativeParameterInput) -> Any:
 
 
 class AnalysisOptions(StrictOptions):
+    backend: Literal["python", "origin_native"] = "python"
     degree: int | None = None
     polyorder: int | None = None
     window: int | None = None
@@ -94,6 +95,21 @@ class AnalysisOptions(StrictOptions):
     model: Literal["exponential", "gaussian"] | None = None
     initial_guess: list[float] | None = None
     maxfev: int | None = None
+    bounds: list[list[float]] | None = None
+    parameter_names: list[str] | None = None
+    interpolation_kind: Literal["linear", "nearest", "cubic"] | None = None
+    interpolation_points: list[float] | None = None
+    normalization_method: Literal["min_max", "z_score", "area"] | None = None
+    sample_spacing: Annotated[float, Field(gt=0)] | None = None
+    correlation_method: Literal["pearson", "spearman"] | None = None
+    alternative: Literal["two-sided", "less", "greater"] | None = None
+    population_mean: float | None = None
+    equal_variance: bool | None = None
+    groups: list[list[float]] | None = None
+    components: Annotated[int, Field(ge=1, le=2)] | None = None
+    standardize: bool | None = None
+    create_operation: bool = False
+    recalculate_mode: Literal["none", "auto", "manual"] = "none"
 
 
 class AnalysisFilter(StrictOptions):
@@ -226,7 +242,11 @@ def create_server(
             )
             argument_model.model_rebuild(force=True)
             tool.parameters = argument_model.model_json_schema(by_alias=True)
-            if name in {"origin_configure_graph", "origin_run_xfunction"}:
+            if name in {
+                "origin_configure_graph",
+                "origin_run_analysis",
+                "origin_run_xfunction",
+            }:
                 tool.parameters = _inline_local_schema_refs(tool.parameters)
             registered_tools.append(tool)
             return function
@@ -395,7 +415,11 @@ def create_server(
             method=method,
             x_column=x_column,
             y_column=y_column,
-            options=options.model_dump(exclude_none=True) if options else None,
+            options=(
+                options.model_dump(exclude_none=True, exclude_defaults=True)
+                if options
+                else None
+            ),
             row_start=row_start,
             row_end=row_end,
             filters=[item.model_dump() for item in filters] if filters else None,
