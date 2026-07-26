@@ -1,6 +1,6 @@
 # Origin COM Automation v0.2 Expansion Design
 
-Status: review requested
+Status: implemented as a local release candidate; verification details are recorded separately
 
 Target: local plugin release `0.2.0`
 Primary verified environment: Windows 11 x64, Origin 10.1.0.178, Python x64

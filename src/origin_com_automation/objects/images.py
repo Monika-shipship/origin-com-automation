@@ -29,8 +29,10 @@ def build_image_plan(
     max_bytes: int = 100 * 1024 * 1024,
 ) -> ImagePlan:
     normalized_action = action.strip().lower()
-    if normalized_action not in {"info", "import", "export", "delete"}:
-        raise ObjectPlanError("image action must be info, import, export, or delete")
+    if normalized_action not in {"create", "info", "import", "export", "delete"}:
+        raise ObjectPlanError(
+            "image action must be create, info, import, export, or delete"
+        )
     target = stable_ref(image_ref, kind="image ref")
     resolved: Path | None = None
     if normalized_action in {"import", "export"}:
@@ -57,4 +59,3 @@ def build_image_plan(
         overwrite=overwrite,
         verification="page_state_and_artifact" if normalized_action == "export" else "page_state",
     )
-

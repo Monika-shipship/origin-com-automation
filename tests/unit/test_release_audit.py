@@ -25,8 +25,11 @@ def _repository(tmp_path: Path) -> Path:
         ),
         ".gitignore": ".venv/\n*.opju\n",
         ".mcp.json": "{}\n",
+        "CONTRIBUTING.md": "# Contributing\n",
         "LICENSE": "MIT License\n",
         "README.md": "# Origin COM Automation\n",
+        "SECURITY.md": "# Security\n",
+        "docs/REFERENCES.md": "# References\n",
         "pyproject.toml": '[project]\nname="origin-com-automation"\nversion="0.2.0"\n',
         "skills/origin-automation/SKILL.md": "---\nname: origin-automation\n---\n",
         "src/origin_com_automation/__init__.py": "__version__ = '0.2.0'\n",
@@ -45,7 +48,7 @@ def test_release_audit_accepts_minimal_safe_tracked_repository(tmp_path: Path):
 
     assert report["ok"] is True
     assert report["errors"] == []
-    assert report["tracked_file_count"] == 8
+    assert report["tracked_file_count"] == 11
 
 
 def test_release_audit_rejects_origin_projects_personal_paths_and_secrets(tmp_path: Path):

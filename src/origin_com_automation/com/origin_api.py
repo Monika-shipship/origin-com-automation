@@ -57,14 +57,12 @@ from ..services.projects import (
     SourceOverwriteError,
     copy_project,
     project_signature,
-    validate_artifact,
     validate_project_artifact,
 )
 from ..services.worksheets import table_from_com_value
 from .discovery import discover_registrations, executable_version
 from .errors import (
     AnalysisExecutionError,
-    AttachedSessionProtectedError,
     LabTalkExecutionError,
     NoActiveSessionError,
     NoExistingOriginError,
@@ -121,6 +119,7 @@ WORKSHEET_DATA_FORMATS = {
 }
 SINGLE_INSTANCE_PROGIDS = {"Origin.ApplicationSI", "Origin.ApplicationCOMSI"}
 OWNED_INSTANCE_PROGID = "Origin.Application"
+ORIGIN_DISABLE_SAVE_PROMPT_SCRIPT = "doc -s;"
 ORIGIN_DELAYED_EXIT_SCRIPT = "def timerproc { exit; } timer 1;"
 LINE_CONNECTIONS = {
     "none": 0,
@@ -254,6 +253,94 @@ def _collection_items(collection: Any) -> list[Any]:
         return list(collection)
     except Exception:
         return []
+
+
+def _find_collection_item(collection: Any, reference: str) -> Any | None:
+    if collection is None:
+        return None
+    try:
+        item = collection.Item(reference)
+        if item is not None:
+            return item
+    except Exception:
+        pass
+    normalized = reference.strip().casefold()
+    for item in _collection_items(collection):
+        names = {
+            str(_safe_attr(item, "Name", "")).strip().casefold(),
+            str(_safe_attr(item, "LongName", "")).strip().casefold(),
+        }
+        if normalized in names:
+            return item
+    return None
+
+
+def _page_numeric_property(page: Any, name: str) -> float | None:
+    value = _safe_attr(page, name)
+    if value is None:
+        value = _safe_call(page, "GetNumProp", name, default=None)
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) and number > 0 else None
+
+
+def _matrix_data_object(matrix_sheet: Any) -> Any:
+    for collection_name in ("MatrixObjects", "DataObjectBases"):
+        objects = _collection_items(_safe_attr(matrix_sheet, collection_name))
+        if objects:
+            return objects[0]
+    return matrix_sheet
+
+
+def _matrix_object_block(
+    matrix_object: Any,
+    row: int,
+    column: int,
+    rows: int,
+    columns: int,
+) -> Any:
+    args = (row, column, row + rows - 1, column + columns - 1)
+    try:
+        return matrix_object.GetData(*args, ORIGIN_ARRAY2D_VARIANT)
+    except TypeError:
+        return matrix_object.GetData(*args)
+
+
+def _normalize_matrix_object_table(
+    value: Any, *, column_major_bridge: bool
+) -> list[list[Any]]:
+    table = table_from_com_value(value)
+    if column_major_bridge and table:
+        table = [list(row) for row in zip(*table, strict=True)]
+    return [[_normalize_cell(cell) for cell in row] for row in table]
+
+
+def _project_path_parts(path: str) -> list[str]:
+    return [part for part in path.replace("\\", "/").split("/") if part]
+
+
+def _resolve_root_folder(root: Any, path: str) -> Any | None:
+    current = root
+    for part in _project_path_parts(path):
+        current = _find_collection_item(_safe_attr(current, "Folders"), part)
+        if current is None:
+            return None
+    return current
+
+
+def _ensure_root_folder(root: Any, path: str) -> Any | None:
+    current = root
+    for part in _project_path_parts(path):
+        folders = _safe_attr(current, "Folders")
+        child = _find_collection_item(folders, part)
+        if child is None:
+            child = _safe_call(folders, "Add", part, default=None)
+        if child is None:
+            return None
+        current = child
+    return current
 
 
 def _same_origin_object(left: Any, right: Any) -> bool:
@@ -1856,7 +1943,7 @@ class OriginController:
         self,
         pid: int,
         *,
-        attempts: int = 50,
+        attempts: int = 100,
         interval_s: float = 0.2,
     ) -> tuple[bool, set[int] | None]:
         last_snapshot: set[int] | None = None
@@ -2062,7 +2149,7 @@ class OriginController:
                         raise OwnershipUnverifiedError(
                             "Origin rejected the exclusive BeginSession lock"
                         )
-                except Exception as lock_error:
+                except Exception:
                     raise
                 self._exclusive = True
             self._app = app
@@ -2391,8 +2478,12 @@ class OriginController:
 
         prepared = self._submit(prepare_candidate)
         if not prepared.success:
-            artifacts = [Artifact(str(candidate), "origin_project_candidate")] if candidate.is_file() else []
-            return replace(prepared, artifacts=artifacts)
+            failed_artifacts = (
+                [Artifact(str(candidate), "origin_project_candidate")]
+                if candidate.is_file()
+                else []
+            )
+            return replace(prepared, artifacts=failed_artifacts)
 
         candidate_metadata = prepared.data["candidate"]
         artifacts: list[Artifact] = []
@@ -2810,12 +2901,125 @@ class OriginController:
             return ResultEnvelope.fail(exc.code, str(exc))
 
         def execute() -> ResultEnvelope:
-            sheet = _resolve_worksheet(self._require_app(), plan.worksheet_ref)
+            app = self._require_app()
+            sheet = _resolve_worksheet(app, plan.worksheet_ref)
             connector = _safe_attr(sheet, "Connector")
             if connector is None:
-                return ResultEnvelope.fail(
-                    "CONNECTOR_INTERFACE_UNAVAILABLE",
-                    "This Origin worksheet does not expose a COM Connector interface",
+                required_methods = (
+                    "DoMethod",
+                    "Execute",
+                    "GetNumProp",
+                    "GetStrProp",
+                    "SetStrProp",
+                )
+                if not all(callable(getattr(sheet, name, None)) for name in required_methods):
+                    return ResultEnvelope.fail(
+                        "CONNECTOR_INTERFACE_UNAVAILABLE",
+                        "This Origin worksheet does not expose Data Connector COM methods",
+                    )
+                connected = bool(sheet.GetNumProp("HasDC"))
+                if plan.action == "create":
+                    sheet.DoMethod("DC.Allow", "2")
+                    add_result = sheet.Execute(
+                        f"wbook.dc.add({plan.connector_type})"
+                    )
+                    if add_result is False or add_result == 0:
+                        return ResultEnvelope.fail(
+                            "CONNECTOR_ACTION_REJECTED",
+                            "Origin rejected Data Connector creation",
+                        )
+                    sheet.SetStrProp("DC.Source", str(plan.source))
+                    previous_sparklines = _safe_call(
+                        app, "LTVar", "@IMPS", default=None
+                    )
+                    _safe_call(app, "Execute", "@IMPS=0;", default=None)
+                    try:
+                        sheet.DoMethod("DC.Import", "")
+                    finally:
+                        if previous_sparklines is not None:
+                            _safe_call(
+                                app,
+                                "Execute",
+                                f"@IMPS={int(previous_sparklines)};",
+                                default=None,
+                            )
+                    connected = bool(sheet.GetNumProp("HasDC"))
+                elif plan.action == "refresh":
+                    if not connected:
+                        return ResultEnvelope.fail(
+                            "CONNECTOR_NOT_FOUND",
+                            f"Worksheet has no Data Connector: {plan.worksheet_ref}",
+                        )
+                    previous_sparklines = _safe_call(
+                        app, "LTVar", "@IMPS", default=None
+                    )
+                    _safe_call(app, "Execute", "@IMPS=0;", default=None)
+                    try:
+                        sheet.DoMethod("DC.Import", "")
+                    finally:
+                        if previous_sparklines is not None:
+                            _safe_call(
+                                app,
+                                "Execute",
+                                f"@IMPS={int(previous_sparklines)};",
+                                default=None,
+                            )
+                elif plan.action == "disconnect":
+                    if not connected:
+                        return ResultEnvelope.fail(
+                            "CONNECTOR_NOT_FOUND",
+                            f"Worksheet has no Data Connector: {plan.worksheet_ref}",
+                        )
+                    remove_result = sheet.Execute("wbook.dc.remove();")
+                    if remove_result is False or remove_result == 0:
+                        return ResultEnvelope.fail(
+                            "CONNECTOR_ACTION_REJECTED",
+                            "Origin rejected Data Connector removal",
+                        )
+                    connected = bool(sheet.GetNumProp("HasDC"))
+                actual_source = str(sheet.GetStrProp("DC.Source") or "")
+                if (
+                    plan.action == "create"
+                    and Path(actual_source).resolve() != plan.source
+                ):
+                    return ResultEnvelope.fail(
+                        "CONNECTOR_CREATE_UNCONFIRMED",
+                        "Data Connector source readback did not match",
+                        data={"source": actual_source, "connected": connected},
+                    )
+                if plan.action == "create" and not connected:
+                    return ResultEnvelope.fail(
+                        "CONNECTOR_CREATE_UNCONFIRMED",
+                        "Worksheet did not report an active Data Connector",
+                    )
+                if plan.action == "disconnect" and connected:
+                    return ResultEnvelope.fail(
+                        "CONNECTOR_DISCONNECT_UNCONFIRMED",
+                        "Data Connector remained active after removal",
+                    )
+                parent = _safe_attr(sheet, "Parent")
+                page_name = str(_safe_attr(parent, "Name", "") or "")
+                sheet_name = str(_safe_attr(sheet, "Name", "") or "")
+                actual_worksheet_ref = (
+                    f"[{page_name}]{sheet_name}"
+                    if page_name and sheet_name
+                    else plan.worksheet_ref
+                )
+                connector_type_value = str(
+                    _safe_call(parent, "GetStrProp", "DC.Type", default="") or ""
+                )
+                return ResultEnvelope.ok(
+                    {
+                        "action": plan.action,
+                        "requested_worksheet_ref": plan.worksheet_ref,
+                        "worksheet_ref": actual_worksheet_ref,
+                        "source": actual_source or None,
+                        "connector_type": connector_type_value or plan.connector_type,
+                        "connected": connected,
+                        "refresh_count": int(_safe_attr(sheet, "refreshes", 0) or 0),
+                        "keep_data": plan.keep_data,
+                        "interface": "labtalk_data_connector",
+                    }
                 )
             if plan.action == "create":
                 result = connector.Connect(
@@ -2898,18 +3102,87 @@ class OriginController:
 
         def execute() -> ResultEnvelope:
             app = self._require_app()
+            if plan.action == "create":
+                pages = _safe_attr(app, "MatrixPages")
+                if pages is None or not callable(getattr(pages, "Add", None)):
+                    return ResultEnvelope.fail(
+                        "MATRIX_CREATE_UNAVAILABLE",
+                        "Origin does not expose MatrixPages.Add through COM",
+                    )
+                before_count = int(_safe_attr(pages, "Count", 0) or 0)
+                page = pages.Add()
+                if page is None:
+                    return ResultEnvelope.fail(
+                        "MATRIX_CREATE_UNCONFIRMED", "MatrixPages.Add returned no page"
+                    )
+                try:
+                    page.LongName = plan.matrix_ref
+                except Exception:
+                    pass
+                layers = _safe_attr(page, "Layers")
+                layer_items = _collection_items(layers)
+                after_count = int(_safe_attr(pages, "Count", 0) or 0)
+                if after_count != before_count + 1 or not layer_items:
+                    return ResultEnvelope.fail(
+                        "MATRIX_CREATE_UNCONFIRMED",
+                        "Matrix page or first matrix sheet was not created",
+                    )
+                layer = layer_items[0]
+                actual_ref = (
+                    f'[{_safe_attr(page, "Name", "")}]'
+                    f'{_safe_attr(layer, "Name", "")}'
+                )
+                matrix_sheet = _safe_call(
+                    app, "FindMatrixSheet", actual_ref, default=None
+                )
+                matrix_objects = _safe_attr(matrix_sheet, "MatrixObjects")
+                if (
+                    matrix_objects is not None
+                    and int(_safe_attr(matrix_objects, "Count", 0) or 0) == 0
+                    and callable(getattr(matrix_objects, "Add", None))
+                ):
+                    matrix_objects.Add()
+                data_object = _matrix_data_object(matrix_sheet)
+                if matrix_sheet is None or not all(
+                    callable(getattr(data_object, method, None))
+                    for method in ("SetData", "GetData")
+                ):
+                    return ResultEnvelope.fail(
+                        "MATRIX_CREATE_UNCONFIRMED",
+                        "Matrix page was created without a writable matrix object",
+                    )
+                return ResultEnvelope.ok(
+                    {
+                        "action": "create",
+                        "requested_ref": plan.matrix_ref,
+                        "matrix_ref": actual_ref,
+                        "page_name": str(_safe_attr(page, "Name", "")),
+                        "sheet_name": str(_safe_attr(layer, "Name", "")),
+                        "verified": True,
+                    }
+                )
             matrix = _safe_call(app, "FindMatrixSheet", plan.matrix_ref, default=None)
             if matrix is None:
                 return ResultEnvelope.fail(
                     "MATRIX_NOT_FOUND", f"Matrix sheet not found: {plan.matrix_ref}"
                 )
+            matrix_object = _matrix_data_object(matrix)
+            column_major_bridge = matrix_object is not matrix
             if plan.action == "write":
                 block = [list(item) for item in plan.values or ()]
-                result = matrix.SetData(block, plan.row, plan.column)
+                result = matrix_object.SetData(block, plan.row, plan.column)
                 if result is False or result == 0:
                     return ResultEnvelope.fail("MATRIX_WRITE_REJECTED", "Origin rejected Matrix.SetData")
-                raw = matrix.GetData()
-                readback = table_from_com_value(raw)
+                raw = _matrix_object_block(
+                    matrix_object,
+                    plan.row,
+                    plan.column,
+                    len(block),
+                    len(block[0]) if block else 0,
+                )
+                readback = _normalize_matrix_object_table(
+                    raw, column_major_bridge=column_major_bridge
+                )
                 mismatches = _matrix_mismatches(block, readback)
                 if mismatches:
                     return ResultEnvelope.fail(
@@ -2927,7 +3200,10 @@ class OriginController:
                     }
                 )
             if plan.action == "read":
-                data = table_from_com_value(matrix.GetData())
+                data = _normalize_matrix_object_table(
+                    matrix_object.GetData(),
+                    column_major_bridge=column_major_bridge,
+                )
                 return ResultEnvelope.ok(
                     {
                         "action": "read",
@@ -2948,10 +3224,7 @@ class OriginController:
                         "supported_unverified": True,
                     }
                 )
-            return ResultEnvelope.fail(
-                "MATRIX_CREATE_UNVERIFIED",
-                "Matrix creation is not enabled until the installed COM interface is verified",
-            )
+            return ResultEnvelope.fail("MATRIX_ACTION_UNSUPPORTED", plan.action)
 
         return self._submit(
             execute, retryable=plan.action == "read", stage=f"matrix_{plan.action}"
@@ -2983,15 +3256,62 @@ class OriginController:
         def execute() -> ResultEnvelope:
             app = self._require_app()
             page = _safe_call(app, "FindImagePage", plan.image_ref, default=None)
+            pages = _safe_attr(app, "ImagePages")
+            if page is None:
+                page = _find_collection_item(pages, plan.image_ref)
+            if plan.action == "create":
+                if page is not None:
+                    return ResultEnvelope.fail(
+                        "IMAGE_PAGE_ALREADY_EXISTS",
+                        f"Image Page already exists: {plan.image_ref}",
+                    )
+                if pages is None or not callable(getattr(pages, "Add", None)):
+                    return ResultEnvelope.fail(
+                        "IMAGE_CREATE_UNAVAILABLE",
+                        "Origin does not expose ImagePages.Add through COM",
+                    )
+                before_count = int(_safe_attr(pages, "Count", 0) or 0)
+                page = pages.Add()
+                if page is None:
+                    return ResultEnvelope.fail(
+                        "IMAGE_CREATE_UNCONFIRMED", "ImagePages.Add returned no page"
+                    )
+                try:
+                    page.LongName = plan.image_ref
+                except Exception:
+                    pass
+                if int(_safe_attr(pages, "Count", 0) or 0) != before_count + 1:
+                    return ResultEnvelope.fail(
+                        "IMAGE_CREATE_UNCONFIRMED", "ImagePages count did not increase"
+                    )
+                return ResultEnvelope.ok(
+                    {
+                        "action": "create",
+                        "requested_ref": plan.image_ref,
+                        "image_ref": str(_safe_attr(page, "Name", "")),
+                        "long_name": str(_safe_attr(page, "LongName", "")),
+                        "verified": True,
+                    }
+                )
             if page is None:
                 return ResultEnvelope.fail("IMAGE_PAGE_NOT_FOUND", f"Image Page not found: {plan.image_ref}")
             artifacts: list[Artifact] = []
             if plan.action == "import":
-                result = page.Import(str(plan.path))
+                importer = getattr(page, "Import", None)
+                if callable(importer):
+                    result = importer(str(plan.path))
+                else:
+                    result = page.Execute(
+                        f"img.Load({_labtalk_quote(str(plan.path))})"
+                    )
             elif plan.action == "export":
-                result = page.Export(str(plan.path))
+                exporter = getattr(page, "Export", None)
+                if callable(exporter):
+                    result = exporter(str(plan.path))
+                else:
+                    result = page.Preview(str(plan.path))
             elif plan.action == "delete":
-                delete = getattr(page, "Delete", None)
+                delete = getattr(page, "Delete", None) or getattr(page, "Destroy", None)
                 if not callable(delete):
                     return ResultEnvelope.fail("IMAGE_DELETE_UNAVAILABLE", "Image Page does not expose Delete")
                 result = delete()
@@ -3003,16 +3323,27 @@ class OriginController:
                 if not plan.path or not plan.path.is_file() or plan.path.stat().st_size == 0:
                     return ResultEnvelope.fail("IMAGE_EXPORT_UNCONFIRMED", "Image export artifact is missing or empty")
                 artifacts.append(Artifact(str(plan.path), "origin_image"))
+            width = _page_numeric_property(page, "Width")
+            height = _page_numeric_property(page, "Height")
             source_value = str(_safe_attr(page, "Source", "")) or None
-            if plan.action == "import" and Path(source_value or "").resolve() != plan.path:
-                return ResultEnvelope.fail("IMAGE_IMPORT_UNCONFIRMED", "Image source readback did not match")
+            if plan.action == "import":
+                source_matches = bool(
+                    source_value and Path(source_value).resolve() == plan.path
+                )
+                if not source_matches and not (width and height):
+                    return ResultEnvelope.fail(
+                        "IMAGE_IMPORT_UNCONFIRMED",
+                        "Image source and dimensions could not be confirmed",
+                    )
+                if not source_value:
+                    source_value = str(plan.path)
             return ResultEnvelope.ok(
                 {
                     "action": plan.action,
                     "image_ref": plan.image_ref,
                     "source": source_value,
-                    "width": _safe_attr(page, "Width"),
-                    "height": _safe_attr(page, "Height"),
+                    "width": width,
+                    "height": height,
                     "path": str(plan.path) if plan.path else None,
                     "artifact_verified": plan.action != "export" or bool(artifacts),
                 },
@@ -3047,13 +3378,106 @@ class OriginController:
             return ResultEnvelope.fail(exc.code, str(exc))
 
         def execute() -> ResultEnvelope:
-            folders = _safe_attr(self._require_app(), "ProjectFolders")
+            app = self._require_app()
+            folders = _safe_attr(app, "ProjectFolders")
             if folders is None:
-                return ResultEnvelope.fail(
-                    "PROJECT_FOLDER_INTERFACE_UNAVAILABLE",
-                    "This Origin version does not expose ProjectFolders through COM",
-                )
-            exists = lambda value: bool(_safe_call(folders, "Exists", value, default=False))
+                root = _safe_attr(app, "RootFolder")
+                if root is None:
+                    return ResultEnvelope.fail(
+                        "PROJECT_FOLDER_INTERFACE_UNAVAILABLE",
+                        "This Origin version exposes neither ProjectFolders nor RootFolder",
+                    )
+                if plan.action == "list":
+                    folder = _resolve_root_folder(root, plan.path)
+                    if folder is None:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_NOT_FOUND",
+                            f"Project Folder not found: {plan.path}",
+                        )
+                    prefix = plan.path.rstrip("/")
+                    children = [
+                        f'{prefix}/{_safe_attr(child, "Name", "")}'
+                        for child in _collection_items(_safe_attr(folder, "Folders"))
+                    ]
+                    return ResultEnvelope.ok(
+                        {"action": "list", "path": plan.path, "children": children}
+                    )
+                if plan.action == "create":
+                    folder = _ensure_root_folder(root, plan.path)
+                    verified = folder is not None
+                elif plan.action == "rename":
+                    folder = _resolve_root_folder(root, plan.path)
+                    source_parent = "/" + "/".join(_project_path_parts(plan.path)[:-1])
+                    destination_parent = "/" + "/".join(
+                        _project_path_parts(plan.destination or "")[:-1]
+                    )
+                    if folder is None:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_NOT_FOUND",
+                            f"Project Folder not found: {plan.path}",
+                        )
+                    if source_parent.rstrip("/") != destination_parent.rstrip("/"):
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_MOVE_UNAVAILABLE",
+                            "RootFolder COM supports rename only within the current parent",
+                        )
+                    new_name = _project_path_parts(plan.destination or "")[-1]
+                    folder.Name = new_name
+                    try:
+                        folder.LongName = new_name
+                    except Exception:
+                        pass
+                    verified = _resolve_root_folder(root, plan.destination or "") is not None
+                elif plan.action == "move":
+                    return ResultEnvelope.fail(
+                        "PROJECT_FOLDER_MOVE_UNAVAILABLE",
+                        "RootFolder COM does not expose a verified folder move method",
+                    )
+                else:
+                    folder = _resolve_root_folder(root, plan.path)
+                    if folder is None:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_NOT_FOUND",
+                            f"Project Folder not found: {plan.path}",
+                        )
+                    children = _collection_items(_safe_attr(folder, "Folders"))
+                    pages = _collection_items(_safe_attr(folder, "PageBases"))
+                    if (children or pages) and not plan.confirm_recursive:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_NOT_EMPTY",
+                            "Non-empty folder deletion requires confirm_recursive=true",
+                        )
+                    destroy = getattr(folder, "Destroy", None)
+                    if not callable(destroy):
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_DELETE_UNAVAILABLE",
+                            "Folder does not expose Destroy through COM",
+                        )
+                    result = destroy()
+                    if result is False or result == 0:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_ACTION_REJECTED",
+                            "Origin rejected folder deletion",
+                        )
+                    verified = _resolve_root_folder(
+                        _safe_attr(app, "RootFolder"), plan.path
+                    ) is None
+                data = {
+                    "action": plan.action,
+                    "path": plan.path,
+                    "destination": plan.destination,
+                    "verified": verified,
+                    "interface": "root_folder_com",
+                }
+                if not verified:
+                    return ResultEnvelope.fail(
+                        "PROJECT_FOLDER_ACTION_UNCONFIRMED",
+                        "RootFolder state did not confirm the requested action",
+                        data=data,
+                    )
+                return ResultEnvelope.ok(data)
+            def exists(value: str) -> bool:
+                return bool(_safe_call(folders, "Exists", value, default=False))
             if plan.action == "list":
                 children = _safe_call(folders, "List", plan.path, default=None)
                 if children is None:
@@ -3132,10 +3556,20 @@ class OriginController:
         def execute() -> ResultEnvelope:
             app = self._require_app()
             note = _safe_call(app, "FindNotePage", plan.note_ref, default=None)
+            notes = _safe_attr(app, "Notes")
+            if note is None:
+                note = _find_collection_item(notes, plan.note_ref)
             if plan.action == "create":
                 if note is not None:
                     return ResultEnvelope.fail("NOTE_ALREADY_EXISTS", f"Note already exists: {plan.note_ref}")
                 note = _safe_call(app, "CreateNotePage", plan.note_ref, default=None)
+                if note is None and notes is not None and callable(getattr(notes, "Add", None)):
+                    note = notes.Add()
+                    if note is not None:
+                        try:
+                            note.LongName = plan.note_ref
+                        except Exception:
+                            pass
             if note is None:
                 return ResultEnvelope.fail("NOTE_NOT_FOUND", f"Note not found: {plan.note_ref}")
             artifacts: list[Artifact] = []
@@ -3165,7 +3599,8 @@ class OriginController:
             return ResultEnvelope.ok(
                 {
                     "action": plan.action,
-                    "note_ref": plan.note_ref,
+                    "requested_ref": plan.note_ref,
+                    "note_ref": str(_safe_attr(note, "Name", plan.note_ref)),
                     "text": str(_safe_attr(note, "Text", "")) if plan.action != "delete" else None,
                     "format": str(_safe_attr(note, "Format", plan.format)),
                     "path": str(plan.path) if plan.path else None,
@@ -4528,7 +4963,7 @@ class OriginController:
 
         def export() -> dict[str, Any]:
             app = self._require_app()
-            layer = _resolve_graph_layer(app, graph_name)
+            _resolve_graph_layer(app, graph_name)
             target.parent.mkdir(parents=True, exist_ok=True)
             before = snapshot_artifacts(target.parent, target.stem)
             script = (
@@ -4629,6 +5064,18 @@ class OriginController:
                             if callable(end_session):
                                 end_session()
                     finally:
+                        prompt_result = app.Execute(
+                            ORIGIN_DISABLE_SAVE_PROMPT_SCRIPT
+                        )
+                        if prompt_result is False:
+                            raise OriginAutomationError(
+                                "Origin explicitly rejected save-prompt suppression"
+                            )
+                        new_project = app.NewProject()
+                        if new_project not in (True, 1):
+                            raise OriginAutomationError(
+                                "Origin could not release the owned temporary project"
+                            )
                         exit_result = app.Execute(ORIGIN_DELAYED_EXIT_SCRIPT)
                         if exit_result is False:
                             raise OriginAutomationError(

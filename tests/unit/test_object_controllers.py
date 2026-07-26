@@ -9,12 +9,25 @@ class InlineWorker:
 
 
 class Collection:
-    def __init__(self, items):
+    def __init__(self, items, factory=None):
         self.items = items
+        self.factory = factory
         self.Count = len(items)
 
     def Item(self, index):
+        if isinstance(index, str):
+            return next(
+                item
+                for item in self.items
+                if index in {getattr(item, "Name", None), getattr(item, "LongName", None)}
+            )
         return self.items[index]
+
+    def Add(self):
+        item = self.factory() if self.factory else None
+        self.items.append(item)
+        self.Count = len(self.items)
+        return item
 
 
 class Column:
@@ -69,6 +82,7 @@ class Sheet:
 
 class Matrix:
     def __init__(self):
+        self.Name = "MSheet1"
         self.data = [[0.0]]
         self.scripts = []
 
@@ -86,6 +100,8 @@ class Matrix:
 
 class ImagePage:
     def __init__(self):
+        self.Name = "Image1"
+        self.LongName = "Image1"
         self.Source = ""
         self.Width = 10
         self.Height = 20
@@ -99,6 +115,13 @@ class ImagePage:
         return True
 
 
+class Page:
+    def __init__(self, name, layer):
+        self.Name = name
+        self.LongName = name
+        self.Layers = Collection([layer])
+
+
 class ObjectApp:
     Version = "10.1.0.178"
 
@@ -109,6 +132,10 @@ class ObjectApp:
         }
         self.matrix = Matrix()
         self.image = ImagePage()
+        self.MatrixPages = Collection(
+            [], factory=lambda: Page("MBook1", self.matrix)
+        )
+        self.ImagePages = Collection([], factory=lambda: ImagePage())
 
     def FindWorksheet(self, ref):
         return self.sheets.get(ref)
@@ -163,6 +190,72 @@ def test_controller_connector_lifecycle_verifies_state(tmp_path):
     assert disconnected.success and disconnected.data["connected"] is False
 
 
+def test_controller_uses_native_data_connector_when_wrapper_is_absent(tmp_path):
+    source = tmp_path / "native.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+
+    class Book:
+        def __init__(self):
+            self.connector_type = ""
+
+        def GetStrProp(self, name):
+            return self.connector_type if name == "DC.Type" else ""
+
+    class NativeSheet(Sheet):
+        def __init__(self):
+            super().__init__([[1, 2]], ["x", "y"])
+            del self.Connector
+            self.Parent = Book()
+            self.connected = False
+            self.source = ""
+            self.refreshes = 0
+
+        def DoMethod(self, name, argument):
+            if name == "DC.Import":
+                self.refreshes += 1
+            return 1
+
+        def Execute(self, script):
+            if "wbook.dc.add" in script:
+                self.connected = True
+                self.Parent.connector_type = "CSV_Connector"
+            elif "wbook.dc.remove" in script:
+                self.connected = False
+            return 1
+
+        def GetNumProp(self, name):
+            return 1 if name == "HasDC" and self.connected else 0
+
+        def GetStrProp(self, name):
+            return self.source if name == "DC.Source" else ""
+
+        def SetStrProp(self, name, value):
+            if name == "DC.Source":
+                self.source = value
+            return 1
+
+    app = ObjectApp()
+    app.sheets["[Book1]Native"] = NativeSheet()
+    controller = owned_controller(app)
+
+    created = controller.manage_connector(
+        action="create",
+        worksheet_ref="[Book1]Native",
+        source=str(source),
+        connector_type="csv",
+    )
+    refreshed = controller.manage_connector(
+        action="refresh", worksheet_ref="[Book1]Native"
+    )
+    disconnected = controller.manage_connector(
+        action="disconnect", worksheet_ref="[Book1]Native", keep_data=True
+    )
+
+    assert created.success and created.data["interface"] == "labtalk_data_connector"
+    assert refreshed.success and refreshed.data["refresh_count"] == 2
+    assert disconnected.success and disconnected.data["connected"] is False
+
+
 def test_controller_matrix_write_reads_back_exact_block():
     controller = owned_controller(ObjectApp())
     result = controller.manage_matrix(
@@ -174,6 +267,45 @@ def test_controller_matrix_write_reads_back_exact_block():
     assert result.data["readback_verified"] is True
 
 
+def test_controller_creates_matrix_and_returns_actual_stable_ref():
+    controller = owned_controller(ObjectApp())
+
+    result = controller.manage_matrix(action="create", matrix_ref="LiveMatrix")
+
+    assert result.success is True
+    assert result.data["matrix_ref"] == "[MBook1]MSheet1"
+    assert result.data["requested_ref"] == "LiveMatrix"
+    assert result.data["verified"] is True
+
+
+def test_controller_uses_first_matrix_object_for_real_com_shape():
+    app = ObjectApp()
+
+    class TransposedComMatrix(Matrix):
+        def GetData(self, r1=0, c1=0, r2=-1, c2=-1):
+            return tuple(tuple(item) for item in zip(*self.data, strict=True))
+
+    class NativeMatrixSheet:
+        def __init__(self, matrix_object):
+            self.MatrixObjects = Collection([matrix_object])
+
+    app.matrix = NativeMatrixSheet(TransposedComMatrix())
+    controller = owned_controller(app)
+
+    written = controller.manage_matrix(
+        action="write",
+        matrix_ref="[MBook1]MSheet1",
+        values=[[1, 2], [3, 4]],
+    )
+    read = controller.manage_matrix(
+        action="read", matrix_ref="[MBook1]MSheet1"
+    )
+
+    assert written.success is True
+    assert written.data["readback_verified"] is True
+    assert read.data["values"] == [[1.0, 2.0], [3.0, 4.0]]
+
+
 def test_controller_image_import_and_export_verify_artifact(tmp_path):
     source = tmp_path / "source.png"
     source.write_bytes(b"input")
@@ -183,3 +315,13 @@ def test_controller_image_import_and_export_verify_artifact(tmp_path):
     exported = controller.manage_image(action="export", image_ref="Image1", path=str(target))
     assert imported.success and imported.data["source"] == str(source.resolve())
     assert exported.success and target.stat().st_size > 0
+
+
+def test_controller_creates_image_page_through_com_collection():
+    controller = owned_controller(ObjectApp())
+
+    result = controller.manage_image(action="create", image_ref="LiveImage")
+
+    assert result.success is True
+    assert result.data["image_ref"] == "Image1"
+    assert result.data["requested_ref"] == "LiveImage"

@@ -15,8 +15,11 @@ REQUIRED_FILES = {
     ".codex-plugin/plugin.json",
     ".gitignore",
     ".mcp.json",
+    "CONTRIBUTING.md",
     "LICENSE",
     "README.md",
+    "SECURITY.md",
+    "docs/REFERENCES.md",
     "pyproject.toml",
     "skills/origin-automation/SKILL.md",
 }

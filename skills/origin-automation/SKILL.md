@@ -5,7 +5,10 @@ description: Use when Codex needs to inspect or control OriginLab on Windows thr
 
 # Origin Automation
 
-Use the MCP tools as the deterministic control surface. Resolve objects by returned names/refs, preserve the user's scientific choices, and finish through the shortest route that still verifies the requested result.
+Use the MCP tools as the deterministic control surface. Resolve objects by returned names/refs,
+preserve the user's scientific choices, and finish through the shortest route that still verifies
+the requested result. Prefer one digest-bound FigureSpec execution for a clear end-to-end data or
+restyle job; use focused tools when the task needs exact object-level control.
 
 ## Operating Contract
 
@@ -21,6 +24,16 @@ Choose exactly one primary route and do not mix in diagnostic work unless its tr
 2. **Read-only active-session inspection/export:** health check, explicit SI/COMSI `origin_start(attach=true)`, targeted audit/read/export, detach with `origin_shutdown`. Never mutate the attached session.
 3. **Existing OPJU modification:** health check, owned start, `origin_open_project` working copy, targeted audit, batch read/write/analysis/plot, verify, save a separate copy, shutdown. Never reset workbook templates or page metadata on this route.
 4. **New data analysis/plot:** health check, owned start, one `origin_import_data(target_mode="new_workbook")`, inspect its `column_profiles`, analysis, plot/configure, export or save, shutdown. The import uses the system installation template instead of the user's customized `Origin.otwu`. Skip project opening and broad object audits unless needed for a returned ref.
+5. **Complete FigureSpec workflow:** use `origin_inspect_data_source` when column roles need
+   preflight, then `origin_plan_figure` and one `origin_execute_figure` with the returned digest.
+   Use this route when input, analysis choices, plot roles, OPJU output, exports, and QA fit the
+   strict schema. Use `origin_submit_batch` for two or more independent items. Do not expand this
+   route into the low-level call sequence unless planning reports a specific unsupported feature.
+
+For Matrix, Image Page, Data Connector, native operation, template, folder, or Note work, use the
+corresponding focused `origin_manage_*` or native-analysis tool inside route 3 or 4. Call
+`origin_capabilities(domain=...)` once before a specialized or version-sensitive family; do not
+probe by repeatedly executing mutations.
 
 Exporting from a project file uses route 3 and a working copy. Source replacement is not a routine route; use `origin_save_and_replace_source` only with both confirmation booleans and the exact `expected_source_sha256`.
 
@@ -45,6 +58,11 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - Reuse returned refs and prior successful responses. Do not repeat successful calls for reassurance.
 - Merge adjacent ranges and pass multiple Y columns together when the tool supports it.
 - The optional second object audit is reserved for changed structure/bindings or one lookup recovery.
+- A FigureSpec job uses one plan and one execution call. Poll `origin_task_status` only for an
+  asynchronous submission; do not poll a synchronous execution.
+- Query `origin_graph_catalog`, `origin_palette_catalog`, `origin_list_graph_templates`, or
+  `origin_query_knowledge` only when their result is needed to choose or validate the requested
+  route. They are discovery tools, not routine preambles.
 
 ## Conditional Escalation
 
@@ -54,6 +72,9 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - **Transient read failure:** rely on the plugin's bounded internal retry. Do not add another manual retry loop.
 - **Write, analysis, save, export, timeout, or RPC failure:** never replay blindly. If the same failure repeats after the single targeted correction, stop, safely shut down when possible, and report the exact blocker.
 - **First COM timeout:** call `origin_recover_session` immediately. Do not call `origin_shutdown` first because the poisoned STA worker is already blocked. Start a fresh owned session only after recovery, and never replay the timed-out mutation unless the user explicitly authorizes it after inspecting state.
+- **FigureSpec planning blocker:** report the exact blocker. Move to focused tools only when the
+  requested feature is supported there and the scientific intent remains unchanged; do not weaken
+  the spec or set `allow_unverified=true` on the user's behalf.
 - Check watchdog/cleanup tasks only after `ORIGIN_PROCESS_TERMINATED`, `CO_E_SERVER_EXEC_FAILURE`, or relevant RPC loss. Never disable or delete them without explicit permission.
 
 ## Accuracy And Safety Gates
@@ -64,6 +85,12 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - Treat `IMPORT_DATA_LOSS`, `IMPORT_VALIDATION_FAILED`, `WORKSHEET_WRITE_REJECTED`, and `WORKSHEET_WRITE_UNCONFIRMED` as hard stops. Row/column dimensions alone never prove data integrity.
 - Declare LabTalk outputs with `result_numeric_variables` or `result_string_variables`; a valid empty string remains an empty string.
 - Use `categorical_style` and native categorical legends for mapped markers; bind labels directly with `label_column`.
+- X-Functions use typed parameters and declared outputs. Set the unverified-function opt-in only
+  when the user explicitly chose that exact function and accepts its capability status.
+- Graph templates must be discovered first and applied by exact path plus SHA-256. Never treat a
+  user workbook template as a graph template or use it implicitly during data import.
+- Preview QA requires a nonblank PNG and decisive pixel metrics. Expected colors are evidence of
+  rendering, not proof of correct worksheet bindings; verify both when the plot source matters.
 - Verify saved/exported files exist, are non-empty, and match the requested format. Do not claim success from a non-throwing COM method alone.
 - Temporary editability checks must be restored before saving. Reopen only when persistence/editability is part of the requested acceptance criteria or a high-risk source replacement.
 

@@ -1,4 +1,4 @@
-name: Unit tests
+name: Release gates
 
 on:
   push:
@@ -11,7 +11,7 @@ permissions:
   contents: read
 
 jobs:
-  test:
+  quality:
     runs-on: windows-latest
     timeout-minutes: 15
 
@@ -29,10 +29,43 @@ jobs:
         run: python -m pip install --upgrade pip && python -m pip install -e ".[test]"
 
       - name: Compile package
-        run: python -m compileall -q src
+        run: python -m compileall -q src tests
 
       - name: Run unit and MCP transport tests
         run: python -m pytest tests/unit -q
 
+      - name: Run Ruff
+        run: python -m ruff check .
+
+      - name: Run mypy
+        run: python -m mypy
+
+      - name: Validate plugin and Skill distribution
+        run: python scripts/validate_distribution.py .
+
+      - name: Audit tracked release files
+        run: python scripts/release_audit.py .
+
+      - name: Build wheel and source distribution
+        run: python -m build
+
+      - name: Verify wheel installation
+        shell: pwsh
+        run: |
+          $wheel = Get-ChildItem dist\*.whl | Select-Object -First 1
+          python -m pip install --force-reinstall $wheel.FullName
+
       - name: Check installed dependencies
         run: python -m pip check
+
+  secrets:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+
+      - name: Scan tracked history with Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from origin_com_automation.objects.connectors import build_connector_plan
@@ -53,6 +51,14 @@ def test_matrix_write_requires_rectangular_finite_block():
         build_matrix_plan(
             action="write", matrix_ref="[MBook1]MSheet1", values=[[1], [2, 3]]
         )
+
+
+def test_matrix_and_image_create_plans_are_explicit():
+    matrix = build_matrix_plan(action="create", matrix_ref="LiveMatrix")
+    image = build_image_plan(action="create", image_ref="LiveImage")
+    assert matrix.action == "create"
+    assert image.action == "create"
+    assert image.path is None
 
 
 def test_matrix_transform_has_closed_operation_set():

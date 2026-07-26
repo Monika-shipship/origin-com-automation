@@ -539,12 +539,12 @@ def create_server(
 
     @strict_tool(name="origin_manage_image")
     def origin_manage_image(
-        action: Literal["info", "import", "export", "delete"],
+        action: Literal["create", "info", "import", "export", "delete"],
         image_ref: str,
         path: str | None = None,
         overwrite: bool = False,
     ) -> ResultEnvelope:
-        """Inspect, import, export, or delete one stable Image Page ref."""
+        """Create, inspect, import, export, or delete one stable Image Page ref."""
         return active_controller().manage_image(
             action=action,
             image_ref=image_ref,

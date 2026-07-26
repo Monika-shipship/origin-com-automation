@@ -9,7 +9,7 @@ Personal Codex plugin for controlling OriginLab on Windows through a local Pytho
 - Python 3.11+ x64
 - A registered `Origin.Application`, `Origin.ApplicationCOMSI`, or `Origin.ApplicationSI` ProgID
 
-The bootstrap creates a plugin-local `.venv`; it does not install packages into the system Python environment. It installs `pywin32`, MCP, NumPy/SciPy, OpenPyXL, and `xlrd` for legacy `.xls` files.
+The bootstrap creates a plugin-local `.venv`; it does not install packages into the system Python environment. It installs `pywin32`, MCP, NumPy/SciPy, OpenPyXL, Pillow, and `xlrd` for legacy `.xls` files.
 
 ## Setup
 
@@ -36,24 +36,26 @@ codex plugin add origin-com-automation@personal
 
 SI/COMSI is never treated as owned, even when a new PID happens to appear. In a successful owned start, `observed_new_pid` is audit evidence only and `pid_binding_confirmed` is deliberately `false`: a PID set difference does not bind that PID to the returned COM proxy. The plugin never force-terminates an Origin process by PID.
 
-## Tools
+## Tool Surface
 
-| Tool | Purpose |
+The server exposes focused tools for exact control and digest-bound workflow tools for common
+end-to-end jobs. Call `origin_capabilities` before using a specialized graph or analysis route;
+the result distinguishes verified, supported-unverified, and unsupported behavior.
+
+| Area | Tools |
 |---|---|
-| `origin_health_check` | Inspect Python, Origin binary, COM registration, and active process count without activation |
-| `origin_start` | Start an owned hidden instance or explicitly attach read-only |
-| `origin_open_project` | Copy an OPJU and open only the working copy |
-| `origin_save_project_copy` | Wait for pending recalculation, save separately, and validate the file |
-| `origin_save_and_replace_source` | High-risk source replacement through a saved/reopened candidate, dual confirmation, authorized SHA-256, and same-directory backup |
-| `origin_list_objects` | Audit pages, workbooks, worksheets, column labels, matrices, graphs, layers, and plot data sources |
-| `origin_import_data` | Import CSV, TSV, XLS, XLSX, or XLSM into a clean new workbook by default; profile and verify every destination column |
-| `origin_read_worksheet` / `origin_write_worksheet` | Read mixed, numeric, string, variant, or categorical-label data; every write performs an exact lightweight readback |
-| `origin_run_analysis` | Run descriptive statistics, fits, smoothing, derivatives, and peak analysis |
-| `origin_execute_labtalk` | Execute explicit LabTalk and read explicitly typed numeric/string LT variables |
-| `origin_create_plot` / `origin_configure_graph` | Create graphs with direct X/Y/label bindings, configure axes/styles, and apply categorical markers/legends |
-| `origin_export_graph` | Export PNG, TIFF, PDF, or SVG with a non-interactive overwrite policy |
-| `origin_recover_session` | Abandon and replace a poisoned controller without queuing onto its blocked COM worker |
-| `origin_close_project` / `origin_shutdown` | Close an owned project or safely release a healthy session |
+| Environment and sessions | `origin_health_check`, `origin_capabilities`, `origin_start`, `origin_recover_session`, `origin_shutdown` |
+| Projects and source safety | `origin_open_project`, `origin_save_project_copy`, `origin_save_and_replace_source`, `origin_close_project`, `origin_list_objects` |
+| Data | `origin_inspect_data_source`, `origin_import_data`, `origin_read_worksheet`, `origin_write_worksheet`, `origin_transform_worksheet`, `origin_manage_connector` |
+| Native objects | `origin_manage_matrix`, `origin_manage_image`, `origin_manage_project_folder`, `origin_manage_note` |
+| Analysis | `origin_run_analysis`, `origin_run_xfunction`, `origin_list_analysis_operations`, `origin_get_analysis_operation`, `origin_recalculate_analysis`, `origin_manage_analysis_template`, `origin_execute_labtalk` |
+| Graphs | `origin_graph_catalog`, `origin_create_plot`, `origin_create_graph`, `origin_configure_graph`, `origin_manage_graph_layout`, `origin_list_graph_templates`, `origin_apply_graph_template`, `origin_palette_catalog` |
+| Export and visual QA | `origin_export_graph`, `origin_view_graph`, `origin_inspect_png` |
+| High-level workflows | `origin_plan_figure`, `origin_execute_figure`, `origin_submit_batch`, `origin_task_status`, `origin_cancel_task` |
+| Knowledge | `origin_query_knowledge` |
+
+All tools return the common result envelope. Mutation tools require an owned session, use stable
+object refs, and fail closed when readback or artifact verification is inconclusive.
 
 ## Fast Critical Path
 
@@ -78,11 +80,45 @@ For new data, use `target_mode="new_workbook"` and continue only when the return
 
 ## Analysis Engine
 
-The structured analysis tool reads explicitly selected Origin worksheet columns and uses NumPy/SciPy. Responses identify the method and parameters. For Origin-native X-Functions, use `origin_execute_labtalk` with a fully qualified range and a named result variable. The plugin never silently changes fit method, branch, range, smoothing window, polynomial degree, or derivative order.
+The structured analysis tool reads explicitly selected Origin worksheet columns and uses
+NumPy/SciPy. Version 0.2 also provides structured X-Function calls with typed range/output/file
+parameters and an explicit unverified-function gate. Native operations created by the plugin can
+be listed, read, and recalculated through stable operation refs. The live Origin 10.1 regression
+covers a recalculating `fitlr` operation; generic X-Functions and specialized analyses retain
+their per-function capability status.
+
+The plugin never silently changes fit method, branch, range, smoothing window, polynomial degree,
+derivative order, missing-value policy, or normalization rule.
 
 Analysis selection is explicit: `row_start` and `row_end` are inclusive 0-based worksheet rows, `filters` are AND-combined comparisons on selected x/y values, and `row_order` is `as_is` or `reverse`. Use those fields to identify a sweep branch; the plugin does not infer a branch from curve shape. Derivatives support `gradient`, `forward`, `backward`, and `central`. Invalid smoothing windows are rejected instead of rounded or shortened.
 
-Supported nonlinear models in v0.1 are `exponential` and `gaussian`. Unsupported models return an error instead of selecting a substitute.
+Supported structured nonlinear models in v0.2 are `exponential` and `gaussian`. Unsupported models return an error instead of selecting a substitute.
+
+Worksheet transformations require an explicit source range and destination policy. Available
+plans cover sort, filter, deduplicate, missing-value fill, transpose, merge/concat, pivot/melt, and
+calculated columns; each route reports dimensions and verifies the destination. Local CSV and
+Excel Data Connectors can be created, inspected, refreshed, and disconnected without turning a
+remote authenticated source into an implicit dependency.
+
+## FigureSpec and Batch Workflows
+
+`origin_plan_figure` validates a strict FigureSpec without mutation and returns a SHA-256 digest,
+exact stages, blockers, warnings, resolved paths, and graph capability states. Execution requires
+the same digest, so a changed scientific or destructive request cannot run under an earlier
+approval. The two primary routes are:
+
+- `data_to_project`: inspect/import CSV, TSV, or Excel into a clean workbook, analyze, plot, save,
+  export, run QA, and shut down.
+- `restyle_project`: open an OPJU working copy, change the requested graph route, save separately,
+  export, run QA, and shut down.
+
+`origin_submit_batch` serializes an ordered set of FigureSpecs. Task status reports stages and
+progress without worksheet values. Cancellation is accepted only while queued or between safe
+items; an active COM mutation is never falsely reported as cancelled.
+
+The current FigureSpec schema intentionally stays compact. Advanced per-layer formatting,
+templates, and native operation definitions remain available through the focused tools when they
+are not yet represented declaratively.
 
 `origin_configure_graph` accepts axis limits (`x_min`, `x_max`, `y_min`, `y_max`), major tick steps, linear/log10/ln/log2 scales, axis titles, legend visibility, rescaling, per-plot Origin color/line-connection indices, and a structured `data_binding` with worksheet/X/Y/label columns and plot type. Origin 2024 axis values are `linear=0`, `log10=2`, `ln=8`, and `log2=9`.
 
@@ -132,13 +168,25 @@ The stdio server writes protocol data only to stdout; diagnostics and Python log
 
 ```powershell
 & '.\.venv\Scripts\python.exe' -m pytest -q
+& '.\.venv\Scripts\python.exe' -m ruff check .
+& '.\.venv\Scripts\python.exe' -m mypy
+& '.\.venv\Scripts\python.exe' -m build
+& '.\.venv\Scripts\python.exe' scripts\release_audit.py .
+& '.\.venv\Scripts\python.exe' scripts\validate_distribution.py .
 & '.\scripts\smoke_test.ps1' -Live
 $env:ORIGIN_FEEDBACK_PROJECT = 'C:\path\to\WSe2-feedback.opju'
 & '.\.venv\Scripts\python.exe' -m pytest -q tests\smoke\test_feedback_wse2.py
 & '.\.venv\Scripts\python.exe' "$HOME\.codex\skills\.system\plugin-creator\scripts\validate_plugin.py" .
 ```
 
-Live smoke tests are separate from unit tests and use only the owned `Origin.Application`/`DispatchEx` mode. They never attach to or close an existing user instance. The generic smoke imports a 26-row mixed XLSX through the system template, verifies `Ion=2260...950`, writes existing/new numeric/text/mixed columns, then plots, exports, and saves. The feedback regression works only on a temporary working copy; proves B and C independently change decoded PNG pixels; verifies each restoration returns to the original pixel baseline; reopens the saved project; and polls until the observed lifecycle PID exits. A unit test also launches the actual stdio MCP server and calls `origin_health_check` through MCP transport.
+Live smoke tests are separate from unit tests and use only the owned
+`Origin.Application`/`DispatchEx` mode. They never attach to or close an existing user instance.
+The live suite covers mixed-XLSX import/write readback, a native recalculating linear fit, Data
+Connector refresh/disconnect, Matrix persistence, Image Page import, Notes and Project Folders,
+graph preview pixel metrics, dual-Y command routing, a complete FigureSpec, and a two-item batch.
+The feedback regression works only on a temporary OPJU copy and proves graph editability through
+decoded pixel changes and restoration. A unit test also launches the actual stdio MCP server and
+calls `origin_health_check` through MCP transport.
 
 ## Update And Uninstall
 
@@ -155,4 +203,20 @@ To remove the installed cache and registration without deleting the source direc
 codex plugin remove origin-com-automation@personal
 ```
 
-Known limitations: Origin's standard COM interface does not expose a direct proxy-to-PID binding, so PID observations are reported with `pid_binding_confirmed=false` and are never used for force termination. Structured nonlinear fitting currently provides exponential and Gaussian models. The structured categorical legend currently exposes the verified top-right, transparent layout. Other Origin-native X-Functions and specialized graph themes require explicit LabTalk and are reported as such rather than silently substituted.
+## Verified Scope and Known Limits
+
+- Verified on Origin 10.1.0.178: safe owned-session lifecycle, mixed Excel import/write readback,
+  editable OPJU save/reopen, `fitlr` native operation recalculation, local CSV connector lifecycle,
+  Matrix read/write persistence, PNG Image Page import, Notes, Project Folder create/list/rename,
+  graph preview pixel metrics, FigureSpec data-to-project execution, and two-item serial batch.
+- Supported-unverified: Image Page export/conversion, Matrix transformations, folder move/delete,
+  analysis templates, graph-template application, and specialized 2D/3D/statistical graph
+  families. These routes require explicit opt-in where schemas expose it and must not be reported
+  as verified merely because Origin accepted one command.
+- Origin's COM interface does not provide a direct proxy-to-PID binding. PID observations remain
+  audit evidence only and are never used for force termination.
+- Structured nonlinear fitting currently provides exponential and Gaussian models. The verified
+  categorical legend exposes the top-right transparent layout.
+
+See [References and Attribution](docs/REFERENCES.md) for the two public projects reviewed during
+the v0.2 design and the boundary between inspiration and this independent implementation.

@@ -1,10 +1,13 @@
 {
   "name": "origin-com-automation",
-  "version": "0.1.0+codex.20260726094054",
+  "version": "0.2.0+codex.20260726161056",
   "description": "Safe serialized Origin COM automation for data analysis, plotting, and export.",
   "author": {
     "name": "Dawn"
   },
+  "homepage": "https://github.com/Sheldon12311815/origin-com-automation",
+  "repository": "https://github.com/Sheldon12311815/origin-com-automation",
+  "license": "MIT",
   "skills": "./skills/",
   "interface": {
     "displayName": "Origin COM Automation",

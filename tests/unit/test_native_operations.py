@@ -1,5 +1,3 @@
-from pathlib import Path
-
 import pytest
 
 from origin_com_automation.com.origin_api import OriginController

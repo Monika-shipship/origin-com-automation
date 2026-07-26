@@ -323,7 +323,10 @@ def test_shutdown_fails_when_the_confirmed_owned_pid_does_not_exit():
     result = controller.shutdown()
 
     assert app.exit_calls == 0
-    assert app.execute_scripts[-1] == "def timerproc { exit; } timer 1;"
+    assert app.execute_scripts[-2:] == [
+        "doc -s;",
+        "def timerproc { exit; } timer 1;",
+    ]
     assert result.success is False
     assert result.error_code == "SHUTDOWN_UNCONFIRMED"
     assert result.data["pid"] == 101

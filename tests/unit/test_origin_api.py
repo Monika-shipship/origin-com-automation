@@ -360,7 +360,10 @@ def test_project_copy_and_worksheet_io_use_the_owned_app(tmp_path):
     assert stopped.success is True
     assert app.end_session_calls == 0
     assert app.exit_calls == 0
-    assert app.execute_scripts[-1] == "def timerproc { exit; } timer 1;"
+    assert app.execute_scripts[-2:] == [
+        "doc -s;",
+        "def timerproc { exit; } timer 1;",
+    ]
 
 
 def test_overwrite_save_never_accepts_an_unchanged_stale_target(tmp_path):
