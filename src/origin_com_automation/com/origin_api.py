@@ -3768,6 +3768,7 @@ class OriginController:
         sheet_name: str | None = None,
         has_header: bool | None = None,
         target_mode: str = "new_workbook",
+        source_mode: str = "snapshot",
     ) -> ResultEnvelope:
         guard = self._guard_mutation()
         if guard:
@@ -3776,6 +3777,16 @@ class OriginController:
             return ResultEnvelope.fail(
                 "INVALID_IMPORT_TARGET_MODE",
                 "target_mode must be new_workbook or existing_worksheet",
+            )
+        if source_mode not in {"linked", "snapshot"}:
+            return ResultEnvelope.fail(
+                "INVALID_IMPORT_SOURCE_MODE",
+                "source_mode must be linked or snapshot",
+            )
+        if source_mode == "linked":
+            return ResultEnvelope.fail(
+                "LINKED_IMPORT_UNAVAILABLE",
+                "Linked import is not available in this controller build",
             )
         source = Path(file_path).expanduser().resolve()
         if not source.is_file():

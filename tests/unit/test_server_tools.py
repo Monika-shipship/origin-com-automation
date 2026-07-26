@@ -186,6 +186,21 @@ def test_server_registers_the_complete_origin_tool_surface():
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
 
 
+def test_source_and_analysis_schemas_default_to_editable_origin_workflows():
+    tools = asyncio.run(create_server(controller=FakeController()).list_tools())
+    schemas = {tool.name: tool.inputSchema for tool in tools}
+
+    import_properties = schemas["origin_import_data"]["properties"]
+    assert import_properties["source_mode"]["default"] == "linked"
+    assert set(import_properties["source_mode"]["enum"]) == {"linked", "snapshot"}
+
+    options = schemas["origin_run_analysis"]["properties"]["options"]["anyOf"][0]
+    properties = options["properties"]
+    assert properties["backend"]["default"] == "origin_native"
+    assert properties["create_operation"]["default"] is True
+    assert properties["recalculate_mode"]["default"] == "auto"
+
+
 def test_graph_expansion_tools_have_explicit_roles_and_safety_gates():
     tools = asyncio.run(create_server(controller=FakeController()).list_tools())
     schemas = {tool.name: tool.inputSchema for tool in tools}
@@ -647,4 +662,10 @@ def test_analysis_schema_rejects_unknown_options_and_preserves_selection():
     call = next(item for item in controller.calls if item[0] == "run_analysis")
     assert call[1]["row_start"] == 10
     assert call[1]["row_order"] == "reverse"
-    assert call[1]["options"] == {"order": 1, "derivative_method": "central"}
+    assert call[1]["options"] == {
+        "backend": "origin_native",
+        "order": 1,
+        "derivative_method": "central",
+        "create_operation": True,
+        "recalculate_mode": "auto",
+    }

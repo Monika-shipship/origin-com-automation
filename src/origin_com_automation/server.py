@@ -94,7 +94,7 @@ def _decode_native_parameter(value: NativeParameterInput) -> Any:
 
 
 class AnalysisOptions(StrictOptions):
-    backend: Literal["python", "origin_native"] = "python"
+    backend: Literal["python", "origin_native"] = "origin_native"
     degree: int | None = None
     polyorder: int | None = None
     window: int | None = None
@@ -120,8 +120,8 @@ class AnalysisOptions(StrictOptions):
     groups: list[list[float]] | None = None
     components: Annotated[int, Field(ge=1, le=2)] | None = None
     standardize: bool | None = None
-    create_operation: bool = False
-    recalculate_mode: Literal["none", "auto", "manual"] = "none"
+    create_operation: bool = True
+    recalculate_mode: Literal["none", "auto", "manual"] = "auto"
 
 
 class AnalysisFilter(StrictOptions):
@@ -460,6 +460,7 @@ def create_server(
         sheet_name: str | None = None,
         has_header: bool | None = None,
         target_mode: Literal["new_workbook", "existing_worksheet"] = "new_workbook",
+        source_mode: Literal["linked", "snapshot"] = "linked",
     ) -> ResultEnvelope:
         """Import CSV, TSV, XLS, XLSX, or XLSM, with `has_header` true/false or automatic detection."""
         return active_controller().import_data(
@@ -468,6 +469,7 @@ def create_server(
             sheet_name=sheet_name,
             has_header=has_header,
             target_mode=target_mode,
+            source_mode=source_mode,
         )
 
     @strict_tool(name="origin_transform_worksheet")
@@ -601,11 +603,7 @@ def create_server(
             method=method,
             x_column=x_column,
             y_column=y_column,
-            options=(
-                options.model_dump(exclude_none=True, exclude_defaults=True)
-                if options
-                else None
-            ),
+            options=(options or AnalysisOptions()).model_dump(exclude_none=True),
             row_start=row_start,
             row_end=row_end,
             filters=[item.model_dump() for item in filters] if filters else None,
