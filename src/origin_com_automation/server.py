@@ -25,6 +25,7 @@ from .graphs.palettes import palette_catalog
 from .graphs.preview import inspect_png
 from .graphs.templates import discover_templates
 from .native.common import FileRef, OutputRef, RangeRef
+from .knowledge import query_knowledge
 from .tools.health import health_check
 from .workflows.executor import execute_figure
 from .workflows.figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
@@ -386,6 +387,25 @@ def create_server(
             )
         except (OSError, ValueError) as exc:
             return ResultEnvelope.fail("PNG_INSPECTION_FAILED", str(exc))
+
+    @strict_tool(name="origin_query_knowledge")
+    def origin_query_knowledge(
+        term: str | None = None,
+        domain: Literal[
+            "analysis", "connector", "matrix", "image", "graph", "project", "workflow"
+        ]
+        | None = None,
+        status: Literal["verified", "supported_unverified", "unsupported"] | None = None,
+        limit: Annotated[int, Field(ge=1, le=100)] = 20,
+    ) -> ResultEnvelope:
+        """Query original local summaries linked to official Origin documentation."""
+        try:
+            results = query_knowledge(
+                term=term, domain=domain, status=status, limit=limit
+            )
+        except ValueError as exc:
+            return ResultEnvelope.fail("KNOWLEDGE_QUERY_INVALID", str(exc))
+        return ResultEnvelope.ok({"results": results, "count": len(results)})
 
     @strict_tool(name="origin_start")
     def origin_start(
@@ -938,6 +958,40 @@ def create_server(
                 status["error_code"], status["error_message"], data=status
             )
         return ResultEnvelope.ok(status)
+
+    @strict_tool(name="origin_manage_project_folder")
+    def origin_manage_project_folder(
+        action: Literal["list", "create", "move", "rename", "delete"],
+        path: str,
+        destination: str | None = None,
+        confirm_recursive: bool = False,
+    ) -> ResultEnvelope:
+        """List or mutate full Project Explorer paths with recursive-delete confirmation."""
+        return active_controller().manage_project_folder(
+            action=action,
+            path=path,
+            destination=destination,
+            confirm_recursive=confirm_recursive,
+        )
+
+    @strict_tool(name="origin_manage_note")
+    def origin_manage_note(
+        action: Literal["info", "create", "write", "export", "delete"],
+        note_ref: str,
+        text: str | None = None,
+        format: Literal["text", "html"] = "text",
+        path: str | None = None,
+        overwrite: bool = False,
+    ) -> ResultEnvelope:
+        """Inspect, write, export, or delete an Origin Notes page by stable ref."""
+        return active_controller().manage_note(
+            action=action,
+            note_ref=note_ref,
+            text=text,
+            format=format,
+            path=path,
+            overwrite=overwrite,
+        )
 
     @strict_tool(name="origin_close_project")
     def origin_close_project(discard_changes: bool = False) -> ResultEnvelope:

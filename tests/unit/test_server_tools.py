@@ -96,6 +96,14 @@ class FakeController:
         self.calls.append(("view_graph", kwargs))
         return ResultEnvelope.ok(kwargs)
 
+    def manage_project_folder(self, **kwargs):
+        self.calls.append(("manage_project_folder", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def manage_note(self, **kwargs):
+        self.calls.append(("manage_note", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
 
 def test_server_registers_the_complete_origin_tool_surface():
     server = create_server(controller=FakeController())
@@ -138,6 +146,9 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_submit_batch",
         "origin_task_status",
         "origin_cancel_task",
+        "origin_manage_project_folder",
+        "origin_manage_note",
+        "origin_query_knowledge",
         "origin_execute_labtalk",
         "origin_create_plot",
         "origin_configure_graph",

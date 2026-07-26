@@ -39,6 +39,7 @@ from ..objects.images import build_image_plan
 from ..objects.matrices import build_matrix_plan
 from ..objects.validation import ObjectPlanError
 from ..objects.worksheets import TransformValidationError, transform_table
+from ..objects.project import ProjectObjectError, build_folder_plan, build_note_plan
 from ..graphs.catalog import GraphCatalogError, validate_graph_request
 from ..graphs.layout import GraphLayoutError, build_layout_plan
 from ..graphs.preview import inspect_png
@@ -3020,6 +3021,162 @@ class OriginController:
 
         return self._submit(
             execute, retryable=plan.action == "info", stage=f"image_{plan.action}"
+        )
+
+    @_serialized_operation
+    def manage_project_folder(
+        self,
+        *,
+        action: str,
+        path: str,
+        destination: str | None = None,
+        confirm_recursive: bool = False,
+    ) -> ResultEnvelope:
+        if action != "list":
+            guard = self._guard_mutation()
+            if guard:
+                return guard
+        try:
+            plan = build_folder_plan(
+                action=action,
+                path=path,
+                destination=destination,
+                confirm_recursive=confirm_recursive,
+            )
+        except ProjectObjectError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+
+        def execute() -> ResultEnvelope:
+            folders = _safe_attr(self._require_app(), "ProjectFolders")
+            if folders is None:
+                return ResultEnvelope.fail(
+                    "PROJECT_FOLDER_INTERFACE_UNAVAILABLE",
+                    "This Origin version does not expose ProjectFolders through COM",
+                )
+            exists = lambda value: bool(_safe_call(folders, "Exists", value, default=False))
+            if plan.action == "list":
+                children = _safe_call(folders, "List", plan.path, default=None)
+                if children is None:
+                    return ResultEnvelope.fail("PROJECT_FOLDER_LIST_UNAVAILABLE", "ProjectFolders.List is unavailable")
+                return ResultEnvelope.ok(
+                    {"action": "list", "path": plan.path, "children": list(children)}
+                )
+            if plan.action == "create":
+                result = folders.Create(plan.path)
+                verified = exists(plan.path)
+            elif plan.action in {"move", "rename"}:
+                result = folders.Move(plan.path, plan.destination)
+                verified = bool(plan.destination and exists(plan.destination) and not exists(plan.path))
+            else:
+                children = list(_safe_call(folders, "List", plan.path, default=[]))
+                if children and not plan.confirm_recursive:
+                    return ResultEnvelope.fail(
+                        "PROJECT_FOLDER_NOT_EMPTY",
+                        "Non-empty folder deletion requires confirm_recursive=true",
+                        data={"children": children},
+                    )
+                result = folders.Delete(plan.path, plan.confirm_recursive)
+                verified = not exists(plan.path)
+            if result is False or result == 0:
+                return ResultEnvelope.fail(
+                    "PROJECT_FOLDER_ACTION_REJECTED",
+                    f"Origin rejected folder {plan.action}",
+                )
+            data = {
+                "action": plan.action,
+                "path": plan.path,
+                "destination": plan.destination,
+                "verified": verified,
+            }
+            if not verified:
+                return ResultEnvelope.fail(
+                    "PROJECT_FOLDER_ACTION_UNCONFIRMED",
+                    "Project Folder state did not confirm the requested action",
+                    data=data,
+                )
+            return ResultEnvelope.ok(data)
+
+        return self._submit(
+            execute,
+            retryable=plan.action == "list",
+            stage=f"project_folder_{plan.action}",
+        )
+
+    @_serialized_operation
+    def manage_note(
+        self,
+        *,
+        action: str,
+        note_ref: str,
+        text: str | None = None,
+        format: str = "text",
+        path: str | None = None,
+        overwrite: bool = False,
+    ) -> ResultEnvelope:
+        if action not in {"info", "export"}:
+            guard = self._guard_mutation()
+            if guard:
+                return guard
+        try:
+            plan = build_note_plan(
+                action=action,
+                note_ref=note_ref,
+                text=text,
+                format=format,
+                path=path,
+                overwrite=overwrite,
+            )
+        except (ProjectObjectError, ObjectPlanError) as exc:
+            return ResultEnvelope.fail(getattr(exc, "code", "PROJECT_OBJECT_INVALID"), str(exc))
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            note = _safe_call(app, "FindNotePage", plan.note_ref, default=None)
+            if plan.action == "create":
+                if note is not None:
+                    return ResultEnvelope.fail("NOTE_ALREADY_EXISTS", f"Note already exists: {plan.note_ref}")
+                note = _safe_call(app, "CreateNotePage", plan.note_ref, default=None)
+            if note is None:
+                return ResultEnvelope.fail("NOTE_NOT_FOUND", f"Note not found: {plan.note_ref}")
+            artifacts: list[Artifact] = []
+            if plan.action in {"create", "write"}:
+                note.Text = plan.text
+                try:
+                    note.Format = plan.format
+                except Exception:
+                    pass
+                if str(_safe_attr(note, "Text", "")) != plan.text:
+                    return ResultEnvelope.fail("NOTE_WRITE_UNCONFIRMED", "Note text readback did not match")
+            elif plan.action == "export":
+                export = getattr(note, "Export", None)
+                if not callable(export):
+                    return ResultEnvelope.fail("NOTE_EXPORT_UNAVAILABLE", "Note does not expose Export")
+                result = export(str(plan.path), plan.format)
+                if result is False or result == 0 or not plan.path or not plan.path.is_file() or plan.path.stat().st_size == 0:
+                    return ResultEnvelope.fail("NOTE_EXPORT_UNCONFIRMED", "Note export artifact is missing or empty")
+                artifacts.append(Artifact(str(plan.path), "origin_note"))
+            elif plan.action == "delete":
+                delete = getattr(note, "Delete", None)
+                if not callable(delete):
+                    return ResultEnvelope.fail("NOTE_DELETE_UNAVAILABLE", "Note does not expose Delete")
+                result = delete()
+                if result is False or result == 0:
+                    return ResultEnvelope.fail("NOTE_DELETE_REJECTED", "Origin rejected Note deletion")
+            return ResultEnvelope.ok(
+                {
+                    "action": plan.action,
+                    "note_ref": plan.note_ref,
+                    "text": str(_safe_attr(note, "Text", "")) if plan.action != "delete" else None,
+                    "format": str(_safe_attr(note, "Format", plan.format)),
+                    "path": str(plan.path) if plan.path else None,
+                },
+                artifacts=artifacts,
+            )
+
+        return self._submit(
+            execute,
+            retryable=plan.action == "info",
+            stage=f"note_{plan.action}",
         )
 
     @_serialized_operation
