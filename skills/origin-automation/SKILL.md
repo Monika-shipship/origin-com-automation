@@ -1,0 +1,78 @@
+---
+name: origin-automation
+description: Use when Codex needs to inspect or control OriginLab on Windows through COM, including OPJU projects, worksheets, numerical analysis, LabTalk, graph creation, or graph export.
+---
+
+# Origin Automation
+
+Use the MCP tools as the deterministic control surface. Resolve objects by returned names/refs, preserve the user's scientific choices, and finish through the shortest route that still verifies the requested result.
+
+## Operating Contract
+
+Before the first tool call, form a private task contract containing: task route, source, output, exact analysis method, row/range/branch/filter choices, graph type, and requested artifacts. Do not show a planning preamble when these are already clear. Ask only when a missing value is a scientific choice the user must own or when source overwrite needs explicit authorization; choose routine engineering details yourself.
+
+Do not narrate every MCP call. Give at most a short start update, a genuine blocker update, and the completion report. Continue through routine successful steps without asking for confirmation.
+
+## Task Routing
+
+Choose exactly one primary route and do not mix in diagnostic work unless its trigger occurs:
+
+1. **Environment diagnosis:** `origin_health_check`, report the actionable result, stop. Do not activate Origin.
+2. **Read-only active-session inspection/export:** health check, explicit SI/COMSI `origin_start(attach=true)`, targeted audit/read/export, detach with `origin_shutdown`. Never mutate the attached session.
+3. **Existing OPJU modification:** health check, owned start, `origin_open_project` working copy, targeted audit, batch read/write/analysis/plot, verify, save a separate copy, shutdown. Never reset workbook templates or page metadata on this route.
+4. **New data analysis/plot:** health check, owned start, one `origin_import_data(target_mode="new_workbook")`, inspect its `column_profiles`, analysis, plot/configure, export or save, shutdown. The import uses the system installation template instead of the user's customized `Origin.otwu`. Skip project opening and broad object audits unless needed for a returned ref.
+
+Exporting from a project file uses route 3 and a working copy. Source replacement is not a routine route; use `origin_save_and_replace_source` only with both confirmation booleans and the exact `expected_source_sha256`.
+
+## Fast Critical Path
+
+1. Call `origin_health_check` once and reuse its result.
+2. Call `origin_start` once. Default to owned, hidden `Origin.Application`; attach only when the user explicitly targets an already active instance.
+3. Open one working copy when a source OPJU is involved.
+4. Run one initial `origin_list_objects` only when stable refs or existing structure are needed. Extract all required workbook, worksheet, graph, layer, dimensions, and plot-source facts from that response.
+5. Read or import the smallest contiguous blocks that contain all required columns. Import and write tools already perform one exact internal readback; inspect `readback_verified`, `column_profiles`, `non_empty_count`, and the returned stable `worksheet_ref` instead of adding a reassurance call. If a defining X/Y column is empty, mismatched, or unconfirmed, stop before analysis or plotting.
+6. Run the exact requested analysis once with explicit row bounds, `row_order`, filters, method, and options. Never substitute a fit, derivative, smoothing, branch, or range.
+7. Create a graph only if it does not exist. Apply binding, axes, scales, styles, categories, and legend together in one `origin_configure_graph` call per final graph. Prefer structured controls over exploratory LabTalk.
+8. Verify only result-defining invariants: record count/values, required column labels, plot X/Y/label sources, axis state, and non-empty artifacts. Require `label_source_status=resolved` when labels are requested.
+9. Run a second `origin_list_objects` only when page structure or plot bindings changed. Analysis-only, formatting-only, and export-only tasks do not need a second audit unless validation fails.
+10. Save/export each requested artifact once, verify it, restore any temporary linkage-test edits, then call `origin_shutdown` and require confirmed exit for an owned session.
+
+## Call Budget
+
+- Maximum one health check, one start, one project open, and one initial object audit per task.
+- Maximum one write/import plus one readback per logical data block; never write or verify cell by cell.
+- Maximum one final configuration call and one normal export/save attempt per requested graph or artifact.
+- Reuse returned refs and prior successful responses. Do not repeat successful calls for reassurance.
+- Merge adjacent ranges and pass multiple Y columns together when the tool supports it.
+- The optional second object audit is reserved for changed structure/bindings or one lookup recovery.
+
+## Conditional Escalation
+
+- **Health/start failure:** inspect registration, bitness, dependencies, process count, and reported cleanup tasks once. Do not run full diagnostics during a healthy task.
+- **Object lookup failure:** refresh `origin_list_objects` once, correct the stale name/ref once, then continue.
+- **Validation mismatch:** inspect the mismatched data/source/property once and make one targeted correction. Re-run only the failed verification, not the whole workflow.
+- **Transient read failure:** rely on the plugin's bounded internal retry. Do not add another manual retry loop.
+- **Write, analysis, save, export, timeout, or RPC failure:** never replay blindly. If the same failure repeats after the single targeted correction, stop, safely shut down when possible, and report the exact blocker.
+- **First COM timeout:** call `origin_recover_session` immediately. Do not call `origin_shutdown` first because the poisoned STA worker is already blocked. Start a fresh owned session only after recovery, and never replay the timed-out mutation unless the user explicitly authorizes it after inspecting state.
+- Check watchdog/cleanup tasks only after `ORIGIN_PROCESS_TERMINATED`, `CO_E_SERVER_EXEC_FAILURE`, or relevant RPC loss. Never disable or delete them without explicit permission.
+
+## Accuracy And Safety Gates
+
+- Never overwrite a source OPJU by default. Preserve source structure and unrelated pages/data.
+- Never mutate an attached session, treat SI/COMSI as owned, infer proxy-PID binding, or terminate Origin by PID.
+- Read mixed ranges with `data_format=auto`; use `categorical_label` for category strings and numeric mode only for intended internal numeric values.
+- Treat `IMPORT_DATA_LOSS`, `IMPORT_VALIDATION_FAILED`, `WORKSHEET_WRITE_REJECTED`, and `WORKSHEET_WRITE_UNCONFIRMED` as hard stops. Row/column dimensions alone never prove data integrity.
+- Declare LabTalk outputs with `result_numeric_variables` or `result_string_variables`; a valid empty string remains an empty string.
+- Use `categorical_style` and native categorical legends for mapped markers; bind labels directly with `label_column`.
+- Verify saved/exported files exist, are non-empty, and match the requested format. Do not claim success from a non-throwing COM method alone.
+- Temporary editability checks must be restored before saving. Reopen only when persistence/editability is part of the requested acceptance criteria or a high-risk source replacement.
+
+## Completion Format
+
+Return only these compact sections when relevant:
+
+- **Result:** what completed.
+- **Method:** exact analysis/range/branch choices.
+- **Artifacts:** absolute paths.
+- **Verification:** decisive counts, bindings, file checks, and shutdown state.
+- **Limitations:** only genuine unverified or blocked items; omit when empty.

@@ -1,0 +1,45 @@
+# Python environments and caches
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+*.log
+
+# Editors and operating systems
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Local Origin projects, experimental data, and generated artifacts
+*.opj
+*.opju
+*.ogw
+*.ogwu
+*.ogg
+*.oggu
+*.otw
+*.otwu
+*.xlsx
+*.xls
+*.csv
+*.tsv
+outputs/
+work/
+artifacts/
+
+# Internal Codex planning material is not part of the public plugin package
+docs/superpowers/
