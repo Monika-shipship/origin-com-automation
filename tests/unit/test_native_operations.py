@@ -1,5 +1,6 @@
 import pytest
 
+import origin_com_automation.com.origin_api as origin_api
 from origin_com_automation.com.origin_api import OriginController
 from origin_com_automation.native.common import NativeValidationError, OutputRef, RangeRef
 from origin_com_automation.native.operations import (
@@ -299,16 +300,90 @@ def test_controller_routes_verified_native_linear_fit_without_python_fallback():
     ]
 
 
-def test_controller_rejects_unmapped_native_analysis_method():
-    controller = owned_controller(NativeApp())
+def test_controller_defaults_linear_fit_to_auto_native_operation(monkeypatch):
+    app = NativeApp()
+    controller = owned_controller(app)
+    python_calls = []
+    monkeypatch.setattr(
+        origin_api,
+        "run_analysis_data",
+        lambda *args, **kwargs: python_calls.append((args, kwargs)),
+    )
+
+    result = controller.run_analysis(
+        worksheet_name="[Book1]Data",
+        method="linear_fit",
+        x_column="A",
+        y_column="B",
+    )
+
+    assert result.success is True
+    assert result.data["backend"] == "origin_native"
+    assert result.data["editable_in_origin"] is True
+    assert result.data["native_operation_created"] is True
+    assert result.data["recalculate_mode"] == "auto"
+    assert result.data["operation_ref"].startswith("op://fitlr/")
+    assert app.scripts == ["fitlr -r 1 iy:=[Book1]Data!(A,B);"]
+    assert python_calls == []
+
+
+def test_controller_rejects_unmapped_native_analysis_method_without_python_fallback(
+    monkeypatch,
+):
+    app = NativeApp()
+    controller = owned_controller(app)
+    python_calls = []
+    monkeypatch.setattr(
+        origin_api,
+        "run_analysis_data",
+        lambda *args, **kwargs: python_calls.append((args, kwargs)),
+    )
 
     result = controller.run_analysis(
         worksheet_name="[Book1]Data",
         method="pca",
         x_column="A",
         y_column="B",
-        options={"backend": "origin_native"},
     )
 
     assert result.success is False
-    assert result.error_code == "NATIVE_ANALYSIS_UNSUPPORTED"
+    assert result.error_code == "ORIGIN_NATIVE_METHOD_UNAVAILABLE"
+    assert result.data["requested_method"] == "pca"
+    assert result.data["verified_methods"] == ["fft", "linear_fit"]
+    assert app.scripts == []
+    assert python_calls == []
+
+
+class PythonSheet:
+    Cols = 2
+
+    def FindCol(self, name, start, case_sensitive):
+        return {"A": 0, "B": 1}[name]
+
+    def GetData(self, r1, c1, r2, c2, data_format):
+        return ((0.0, 1.0), (1.0, 3.0), (2.0, 5.0))
+
+
+class PythonApp(NativeApp):
+    def __init__(self):
+        super().__init__()
+        self.sheet = PythonSheet()
+
+    def FindWorksheet(self, ref):
+        return self.sheet if ref == "[Book1]Data" else None
+
+
+def test_explicit_python_analysis_is_labeled_non_editable():
+    result = owned_controller(PythonApp()).run_analysis(
+        worksheet_name="[Book1]Data",
+        method="linear_fit",
+        x_column="A",
+        y_column="B",
+        options={"backend": "python"},
+    )
+
+    assert result.success is True
+    assert result.data["backend"] == "python"
+    assert result.data["editable_in_origin"] is False
+    assert result.data["native_operation_created"] is False
+    assert any("does not create" in warning for warning in result.warnings)

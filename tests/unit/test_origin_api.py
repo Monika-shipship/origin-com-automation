@@ -634,6 +634,7 @@ def test_named_columns_accept_origin_data_object_indices():
         method="linear_fit",
         x_column="A",
         y_column="B",
+        options={"backend": "python"},
     )
 
     assert result.success is True
@@ -656,7 +657,7 @@ def test_analysis_applies_explicit_row_range_filters_and_order():
         method="derivative",
         x_column=0,
         y_column=1,
-        options={"derivative_method": "forward"},
+        options={"backend": "python", "derivative_method": "forward"},
         row_start=1,
         row_end=3,
         filters=[{"column": "y", "operator": "le", "value": 4}],

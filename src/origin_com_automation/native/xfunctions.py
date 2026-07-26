@@ -77,7 +77,16 @@ VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
     ),
 }
 
+NATIVE_ANALYSIS_XFUNCTIONS = {
+    "linear_fit": "fitlr",
+    "fft": "fft1",
+}
+
 RECALCULATION_MODES = {"none": 0, "auto": 1, "manual": 2}
+
+
+def verified_native_analysis_methods() -> list[str]:
+    return sorted(NATIVE_ANALYSIS_XFUNCTIONS)
 
 
 @dataclass(frozen=True)

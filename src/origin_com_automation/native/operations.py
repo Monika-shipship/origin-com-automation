@@ -167,6 +167,8 @@ def execute_xfunction_plan(
         "parameters": dict(plan.redacted_parameters),
         "outputs": resolved_outputs,
         "operation_created": plan.create_operation,
+        "native_operation_created": plan.create_operation,
+        "editable_in_origin": plan.create_operation,
         "operation_ref": plan.operation_ref,
         "recalculate_mode": plan.recalculate_mode,
     }

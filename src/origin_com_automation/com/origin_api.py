@@ -39,7 +39,7 @@ from ..native.operations import (
     read_analysis_operation,
     recalculate_operation,
 )
-from ..native.xfunctions import build_xfunction_plan
+from ..native.xfunctions import build_xfunction_plan, verified_native_analysis_methods
 from ..objects.connectors import build_connector_plan, connector_type_for_source
 from ..objects.images import build_image_plan
 from ..objects.matrices import build_matrix_plan
@@ -4759,7 +4759,12 @@ class OriginController:
         except (KeyError, TypeError, ValueError) as exc:
             return ResultEnvelope.fail("INVALID_ANALYSIS_SELECTION", str(exc))
 
-        backend = str(request.options.get("backend", "python"))
+        backend = str(request.options.get("backend", "origin_native"))
+        if backend not in {"origin_native", "python"}:
+            return ResultEnvelope.fail(
+                "INVALID_ANALYSIS_BACKEND",
+                "analysis backend must be origin_native or python",
+            )
         if backend == "origin_native":
             guard = self._guard_mutation()
             if guard:
@@ -4774,8 +4779,13 @@ class OriginController:
                 for key, value in request.options.items()
                 if key not in {"backend", "create_operation", "recalculate_mode"}
             }
-            create_operation = bool(request.options.get("create_operation", False))
-            recalculate_mode = str(request.options.get("recalculate_mode", "none"))
+            create_operation = bool(request.options.get("create_operation", True))
+            recalculate_mode = str(request.options.get("recalculate_mode", "auto"))
+            if not create_operation and recalculate_mode != "none":
+                return ResultEnvelope.fail(
+                    "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
+                    "recalculate_mode must be none when create_operation is false",
+                )
             worksheet_ref = RangeRef(worksheet_name).value
             try:
                 if method == "linear_fit" and not native_options:
@@ -4806,8 +4816,14 @@ class OriginController:
                     )
                 else:
                     return ResultEnvelope.fail(
-                        "NATIVE_ANALYSIS_UNSUPPORTED",
+                        "ORIGIN_NATIVE_METHOD_UNAVAILABLE",
                         f"No verified Origin-native mapping is available for {method} with these options",
+                        data={
+                            "requested_method": method,
+                            "verified_methods": verified_native_analysis_methods(),
+                            "backend": "origin_native",
+                            "python_fallback_attempted": False,
+                        },
                     )
             except NativeValidationError as exc:
                 return ResultEnvelope.fail(exc.code, str(exc))
@@ -4819,11 +4835,19 @@ class OriginController:
                     )
                 except NativeValidationError as exc:
                     return ResultEnvelope.fail(exc.code, str(exc))
-                return ResultEnvelope.ok({**data, "backend": "origin_native"})
+                return ResultEnvelope.ok(
+                    {
+                        **data,
+                        "backend": "origin_native",
+                        "editable_in_origin": bool(data.get("operation_created")),
+                        "native_operation_created": bool(data.get("operation_created")),
+                        "python_fallback_attempted": False,
+                    }
+                )
 
             return self._submit(execute_native, stage=f"native_analysis_{method}")
 
-        def analyze() -> dict[str, Any]:
+        def analyze() -> ResultEnvelope:
             app = self._require_app()
             sheet = _resolve_worksheet(app, worksheet_name)
             x_index = _column_index(sheet, x_column)
@@ -4854,24 +4878,42 @@ class OriginController:
                 x_values.reverse()
                 y_values.reverse()
             try:
-                analysis_result = run_analysis_data(method, x_values, y_values, options)
+                python_options = dict(request.options)
+                python_options["backend"] = "python"
+                python_options.pop("create_operation", None)
+                python_options.pop("recalculate_mode", None)
+                analysis_result = run_analysis_data(
+                    method,
+                    x_values,
+                    y_values,
+                    python_options,
+                )
             except (TypeError, ValueError) as exc:
                 raise AnalysisExecutionError(str(exc)) from exc
-            return {
-                "worksheet": worksheet_name,
-                "method": method,
-                "x_column": x_column,
-                "y_column": y_column,
-                "selection": {
-                    "row_start": row_start,
-                    "row_end": row_end,
-                    "row_order": row_order,
-                    "filters": normalized_filters,
-                    "rows_read": len(raw),
-                    "rows_after_filter": len(x_values),
+            return ResultEnvelope.ok(
+                {
+                    "worksheet": worksheet_name,
+                    "method": method,
+                    "x_column": x_column,
+                    "y_column": y_column,
+                    "selection": {
+                        "row_start": row_start,
+                        "row_end": row_end,
+                        "row_order": row_order,
+                        "filters": normalized_filters,
+                        "rows_read": len(raw),
+                        "rows_after_filter": len(x_values),
+                    },
+                    "result": analysis_result,
+                    "backend": "python",
+                    "editable_in_origin": False,
+                    "native_operation_created": False,
+                    "python_fallback_attempted": False,
                 },
-                "result": analysis_result,
-            }
+                warnings=[
+                    "Python analysis does not create a recalculating Origin Analysis Operation"
+                ],
+            )
 
         return self._submit(analyze, retryable=True)
 
