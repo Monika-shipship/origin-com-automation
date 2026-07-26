@@ -32,14 +32,14 @@ def test_verified_xfunction_rejects_unknown_parameter():
     with pytest.raises(NativeValidationError, match="unknown parameter"):
         build_xfunction_plan(
             "fitlr",
-            {"ix": RangeRef("[Book]1!A:B"), "typo": 1},
+            {"iy": RangeRef("[Book]1!A:B"), "typo": 1},
         )
 
 
 def test_verified_xfunction_requires_typed_range_and_builds_exact_command():
     plan = build_xfunction_plan(
         "fitlr",
-        {"ix": RangeRef("[Book1]Data!A:B")},
+        {"iy": RangeRef("[Book1]Data!A:B")},
         outputs={"oy": OutputRef("[Book1]Fit!A:B")},
         create_operation=True,
         recalculate_mode="auto",
@@ -48,11 +48,10 @@ def test_verified_xfunction_requires_typed_range_and_builds_exact_command():
     assert plan.name == "fitlr"
     assert plan.verified is True
     assert plan.command == (
-        "fitlr ix:=[Book1]Data!A:B oy:=[Book1]Fit!A:B "
-        "recalculate:=1;"
+        "fitlr -r 1 iy:=[Book1]Data!A:B oy:=[Book1]Fit!A:B;"
     )
     assert plan.operation_ref.startswith("op://fitlr/")
-    assert plan.redacted_parameters == {"ix": "[Book1]Data!A:B"}
+    assert plan.redacted_parameters == {"iy": "[Book1]Data!A:B"}
 
 
 def test_unverified_xfunction_needs_explicit_opt_in():
@@ -77,4 +76,4 @@ def test_xfunction_recalculation_modes_are_explicit(mode):
         recalculate_mode=mode,
     )
     expected = {"none": 0, "auto": 1, "manual": 2}[mode]
-    assert f"recalculate:={expected}" in plan.command
+    assert f"-r {expected}" in plan.command

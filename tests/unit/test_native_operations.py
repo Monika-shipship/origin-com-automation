@@ -24,15 +24,16 @@ class NativeApp:
     def __init__(self):
         self.scripts = []
         self.execute_result = True
-        self.lt_vars = {"__codex_op_status": 1, "__codex_op_recalc": 1}
-        self.lt_strings = {"__codex_op_result$": "[Book1]Fit!A:B"}
+        self.lt_strings = {
+            "fitlr.oy$": '[Book1]Data!(C"FitLR X",D"FitLR Y")',
+        }
 
     def Execute(self, script):
         self.scripts.append(script)
         return self.execute_result
 
     def LTVar(self, name):
-        return self.lt_vars.get(name, 0)
+        raise AssertionError(f"unexpected LTVar read: {name}")
 
     def LTStr(self, name):
         return self.lt_strings.get(name, "")
@@ -68,7 +69,7 @@ def test_registry_tracks_plugin_created_operations_only():
     registry = AnalysisOperationRegistry()
     plan = build_xfunction_plan(
         "fitlr",
-        {"ix": RangeRef("[Book1]Data!A:B")},
+        {"iy": RangeRef("[Book1]Data!A:B")},
         outputs={"oy": OutputRef("[Book1]Fit!A:B")},
         create_operation=True,
         recalculate_mode="auto",
@@ -82,6 +83,39 @@ def test_registry_tracks_plugin_created_operations_only():
     assert operation["xfunction"] == "fitlr"
     assert operation["recalculate_mode"] == "auto"
     assert operation["result_refs"] == {"oy": "[Book1]Fit!A:B"}
+
+
+def test_dynamic_xfunction_output_is_resolved_before_operation_registration():
+    registry = AnalysisOperationRegistry()
+    plan = build_xfunction_plan(
+        "fitlr",
+        {"iy": RangeRef("[Book1]Data!(A,B)")},
+        outputs={"oy": OutputRef("<new>")},
+        create_operation=True,
+        recalculate_mode="auto",
+    )
+
+    result = execute_xfunction_plan(NativeApp(), plan, registry)
+
+    assert result["outputs"] == {"oy": "[Book1]Data!(C,D)"}
+    operation = registry.get(plan.operation_ref)
+    assert operation["operation_range"] == "[Book1]Data!(C,D)"
+    assert operation["result_refs"] == {"oy": "[Book1]Data!(C,D)"}
+
+
+def test_implicit_fitlr_output_is_discovered_for_operation_registration():
+    registry = AnalysisOperationRegistry()
+    plan = build_xfunction_plan(
+        "fitlr",
+        {"iy": RangeRef("[Book1]Data!(A,B)")},
+        create_operation=True,
+        recalculate_mode="auto",
+    )
+
+    result = execute_xfunction_plan(NativeApp(), plan, registry)
+
+    assert result["outputs"] == {"oy": "[Book1]Data!(C,D)"}
+    assert registry.get(plan.operation_ref)["operation_range"] == "[Book1]Data!(C,D)"
 
 
 def test_operation_commands_reject_unsafe_ranges():
@@ -109,7 +143,8 @@ def test_read_and_recalculate_use_op_change_and_verify_state():
     before = read_analysis_operation(app, "op://fitlr/abc123", registry)
     after = recalculate_operation(app, "op://fitlr/abc123", registry, wait=True)
 
-    assert before["status"] == "ready"
+    assert before["status"] == "available"
+    assert before["native_query_confirmed"] is True
     assert after["recalculated"] is True
     assert app.scripts == [
         "op_change ir:=[Book1]Fit!A1 tr:=__codex_op_tree op:=get;",
@@ -120,7 +155,7 @@ def test_read_and_recalculate_use_op_change_and_verify_state():
 
 def test_recalculation_readback_failure_is_not_reported_as_success():
     app = NativeApp()
-    app.lt_vars["__codex_op_status"] = 0
+    app.execute_result = False
     registry = AnalysisOperationRegistry()
     registry.register(
         operation_ref="op://fitlr/abc123",
@@ -130,7 +165,7 @@ def test_recalculation_readback_failure_is_not_reported_as_success():
         result_refs={},
     )
 
-    with pytest.raises(NativeValidationError, match="could not be confirmed"):
+    with pytest.raises(NativeValidationError, match="did not confirm"):
         recalculate_operation(app, "op://fitlr/abc123", registry, wait=True)
 
 
@@ -176,7 +211,7 @@ def test_controller_runs_and_lists_plugin_created_operation():
 
     created = controller.run_xfunction(
         name="fitlr",
-        parameters={"ix": RangeRef("[Book1]Data!A:B")},
+        parameters={"iy": RangeRef("[Book1]Data!A:B")},
         outputs={"oy": OutputRef("[Book1]Fit!A:B")},
         create_operation=True,
         recalculate_mode="auto",
@@ -190,7 +225,7 @@ def test_controller_runs_and_lists_plugin_created_operation():
     assert listed.success is True
     assert len(listed.data["operations"]) == 1
     assert fetched.success is True
-    assert fetched.data["status"] == "ready"
+    assert fetched.data["status"] == "available"
 
 
 def test_controller_recalculation_is_mutating_and_unretried():
@@ -198,7 +233,7 @@ def test_controller_recalculation_is_mutating_and_unretried():
     controller = owned_controller(app)
     created = controller.run_xfunction(
         name="fitlr",
-        parameters={"ix": RangeRef("[Book1]Data!A:B")},
+        parameters={"iy": RangeRef("[Book1]Data!A:B")},
         outputs={"oy": OutputRef("[Book1]Fit!A:B")},
         create_operation=True,
         recalculate_mode="manual",
@@ -223,7 +258,7 @@ def test_controller_rejects_native_mutation_in_attached_session():
 
     result = controller.run_xfunction(
         name="fitlr",
-        parameters={"ix": RangeRef("[Book1]Data!A:B")},
+        parameters={"iy": RangeRef("[Book1]Data!A:B")},
     )
 
     assert result.success is False
@@ -235,7 +270,7 @@ def test_controller_returns_stable_validation_error_for_bad_native_request():
 
     result = controller.run_xfunction(
         name="fitlr",
-        parameters={"ix": "untyped range"},
+        parameters={"iy": "untyped range"},
     )
 
     assert result.success is False
@@ -262,7 +297,7 @@ def test_controller_routes_verified_native_linear_fit_without_python_fallback():
     assert result.data["backend"] == "origin_native"
     assert result.data["operation_ref"].startswith("op://fitlr/")
     assert app.scripts == [
-        "fitlr ix:=[Book1]Data!(A,B) recalculate:=1;"
+        "fitlr -r 1 iy:=[Book1]Data!(A,B);"
     ]
 
 

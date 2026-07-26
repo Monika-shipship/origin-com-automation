@@ -14,6 +14,10 @@ from .xfunctions import XFunctionPlan
 
 _OPERATION_REF = re.compile(r"^op://([a-z][a-z0-9_]*)/([a-f0-9]{6,64})$")
 _TEMPLATE_EXTENSIONS = {".ogwu", ".otwu"}
+_COLUMN_WITH_LABEL = re.compile(r'^(?P<column>[A-Za-z]+|\d+)"[^"]*"$')
+_LABELED_COLUMN_RANGE = re.compile(
+    r"^(?P<prefix>\[[^\]]+\][^!]+!\()(?P<body>[^()]*)\)$"
+)
 
 
 def normalize_operation_ref(value: str) -> str:
@@ -97,32 +101,87 @@ def _execute(app: Any, command: str, *, action: str) -> None:
         )
 
 
+def normalize_xfunction_output_range(value: str) -> str:
+    """Remove Origin column long-name annotations from an X-Function range."""
+
+    normalized = value.strip()
+    match = _LABELED_COLUMN_RANGE.fullmatch(normalized)
+    if match:
+        columns = []
+        for raw_column in match.group("body").split(","):
+            token = raw_column.strip()
+            labeled = _COLUMN_WITH_LABEL.fullmatch(token)
+            if labeled:
+                token = labeled.group("column")
+            if not re.fullmatch(r"[A-Za-z]+|\d+", token):
+                raise NativeValidationError(
+                    f"Origin returned an unsupported output range: {value!r}",
+                    code="XFUNCTION_OUTPUT_UNCONFIRMED",
+                )
+            columns.append(token)
+        if not columns:
+            raise NativeValidationError(
+                "Origin returned an empty X-Function output range",
+                code="XFUNCTION_OUTPUT_UNCONFIRMED",
+            )
+        normalized = f'{match.group("prefix")}{",".join(columns)})'
+    else:
+        head, quote, _label = normalized.partition('"')
+        if quote:
+            normalized = head
+    try:
+        return RangeRef(normalized).value
+    except NativeValidationError as exc:
+        raise NativeValidationError(
+            f"Origin returned an invalid output range: {value!r}",
+            code="XFUNCTION_OUTPUT_UNCONFIRMED",
+        ) from exc
+
+
+def _resolved_outputs(app: Any, plan: XFunctionPlan) -> dict[str, str]:
+    outputs = {key: value.value for key, value in plan.outputs.items()}
+    dynamic_keys = [key for key, value in outputs.items() if value == "<new>"]
+    if plan.create_operation and not outputs and plan.operation_output:
+        dynamic_keys.append(plan.operation_output)
+    for key in dynamic_keys:
+        raw_range = str(app.LTStr(f"{plan.name}.{key}$") or "").strip()
+        if not raw_range:
+            raise NativeValidationError(
+                f"Origin did not report the {plan.name}.{key} output range",
+                code="XFUNCTION_OUTPUT_UNCONFIRMED",
+            )
+        outputs[key] = normalize_xfunction_output_range(raw_range)
+    return outputs
+
+
 def execute_xfunction_plan(
     app: Any,
     plan: XFunctionPlan,
     registry: AnalysisOperationRegistry,
 ) -> dict[str, Any]:
     _execute(app, plan.command, action=f"X-Function {plan.name}")
+    resolved_outputs = _resolved_outputs(app, plan)
     data: dict[str, Any] = {
         "xfunction": plan.name,
         "verified": plan.verified,
         "parameters": dict(plan.redacted_parameters),
-        "outputs": {key: value.value for key, value in plan.outputs.items()},
+        "outputs": resolved_outputs,
         "operation_created": plan.create_operation,
         "operation_ref": plan.operation_ref,
         "recalculate_mode": plan.recalculate_mode,
     }
     if plan.create_operation:
-        if not plan.operation_ref or not plan.operation_range:
+        operation_range = next(iter(resolved_outputs.values()), plan.operation_range)
+        if not plan.operation_ref or not operation_range:
             raise NativeValidationError(
                 "operation creation requires an explicit input or output range"
             )
         registry.register(
             operation_ref=plan.operation_ref,
             xfunction=plan.name,
-            operation_range=plan.operation_range,
+            operation_range=operation_range,
             recalculate_mode=plan.recalculate_mode,
-            result_refs={key: value.value for key, value in plan.outputs.items()},
+            result_refs=resolved_outputs,
         )
     return data
 
@@ -148,16 +207,10 @@ def read_analysis_operation(
         build_get_operation_command(record["operation_range"]),
         action="Analysis Operation readback",
     )
-    status_value = int(app.LTVar("__codex_op_status"))
-    recalc_value = int(app.LTVar("__codex_op_recalc"))
-    result_ref = str(app.LTStr("__codex_op_result$"))
-    status = "ready" if status_value > 0 else "unknown"
     return registry.update(
         operation_ref,
-        status=status,
-        native_status=status_value,
-        native_recalculate=recalc_value,
-        native_result_ref=result_ref or None,
+        status="available",
+        native_query_confirmed=True,
     )
 
 
@@ -177,7 +230,7 @@ def recalculate_operation(
     if not wait:
         return registry.update(operation_ref, status="pending", recalculated=False)
     verified = read_analysis_operation(app, operation_ref, registry)
-    if verified["status"] != "ready":
+    if verified["status"] != "available":
         raise NativeValidationError(
             "Analysis Operation recalculation could not be confirmed",
             code="ANALYSIS_RECALCULATION_UNCONFIRMED",
@@ -242,4 +295,3 @@ def execute_analysis_template_plan(app: Any, plan: AnalysisTemplatePlan) -> dict
         "workbook_ref": plan.workbook_ref,
         "verified": True,
     }
-

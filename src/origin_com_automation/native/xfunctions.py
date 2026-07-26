@@ -27,6 +27,7 @@ class ParameterRule:
 class XFunctionSpec:
     parameters: Mapping[str, ParameterRule]
     outputs: frozenset[str]
+    operation_output: str | None = None
 
 
 RANGE = (RangeRef,)
@@ -34,8 +35,9 @@ SCALAR = (bool, int, float, str)
 
 VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
     "fitlr": XFunctionSpec(
-        parameters={"ix": ParameterRule(RANGE, required=True)},
+        parameters={"iy": ParameterRule(RANGE, required=True)},
         outputs=frozenset({"oy", "report"}),
+        operation_output="oy",
     ),
     "smooth": XFunctionSpec(
         parameters={
@@ -45,6 +47,7 @@ VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
             "polyorder": ParameterRule((int,)),
         },
         outputs=frozenset({"oy"}),
+        operation_output="oy",
     ),
     "differentiate": XFunctionSpec(
         parameters={
@@ -52,10 +55,12 @@ VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
             "order": ParameterRule((int,)),
         },
         outputs=frozenset({"oy"}),
+        operation_output="oy",
     ),
     "fft1": XFunctionSpec(
         parameters={"ix": ParameterRule(RANGE), "iy": ParameterRule(RANGE, required=True)},
         outputs=frozenset({"ox", "oy", "report"}),
+        operation_output="oy",
     ),
     "nlfit": XFunctionSpec(
         parameters={
@@ -63,10 +68,12 @@ VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
             "func": ParameterRule((str,), required=True),
         },
         outputs=frozenset({"oy", "report"}),
+        operation_output="oy",
     ),
     "peaks": XFunctionSpec(
         parameters={"iy": ParameterRule(RANGE, required=True)},
         outputs=frozenset({"oy", "report"}),
+        operation_output="oy",
     ),
 }
 
@@ -84,6 +91,7 @@ class XFunctionPlan:
     recalculate_mode: str
     operation_ref: str | None
     operation_range: str | None
+    operation_output: str | None
     redacted_parameters: Mapping[str, Any]
 
 
@@ -148,12 +156,12 @@ def build_xfunction_plan(
             raise NativeValidationError(f"output {key!r} must use OutputRef")
 
     tokens = [normalized_name]
+    if create_operation:
+        tokens.extend(("-r", str(RECALCULATION_MODES[recalculate_mode])))
     tokens.extend(
         f"{key}:={labtalk_literal(value)}" for key, value in normalized_parameters.items()
     )
     tokens.extend(f"{key}:={labtalk_literal(value)}" for key, value in normalized_outputs.items())
-    if create_operation:
-        tokens.append(f"recalculate:={RECALCULATION_MODES[recalculate_mode]}")
     command = " ".join(tokens) + ";"
 
     operation_range = next((item.value for item in normalized_outputs.values()), None)
@@ -185,8 +193,8 @@ def build_xfunction_plan(
         recalculate_mode=recalculate_mode,
         operation_ref=operation_ref,
         operation_range=operation_range,
+        operation_output=spec.operation_output if spec is not None else None,
         redacted_parameters={
             key: _display_value(value) for key, value in normalized_parameters.items()
         },
     )
-

@@ -3908,7 +3908,7 @@ class OriginController:
                     plan = build_xfunction_plan(
                         "fitlr",
                         {
-                            "ix": RangeRef(
+                            "iy": RangeRef(
                                 f"{worksheet_ref}!({x_column},{y_column})"
                             )
                         },
