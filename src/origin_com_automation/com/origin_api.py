@@ -23,6 +23,16 @@ from uuid import uuid4
 
 from ..contracts import Artifact, ResultEnvelope
 from ..config import PluginConfig
+from ..native.common import NativeValidationError
+from ..native.operations import (
+    AnalysisOperationRegistry,
+    build_analysis_template_plan,
+    execute_analysis_template_plan,
+    execute_xfunction_plan,
+    read_analysis_operation,
+    recalculate_operation,
+)
+from ..native.xfunctions import build_xfunction_plan
 from ..services.analysis import build_analysis_request, run_analysis_data
 from ..services.exports import (
     export_suffixes,
@@ -1665,6 +1675,7 @@ class OriginController:
         self._poisoned = False
         self._retired = False
         self._current_stage: str | None = None
+        self._analysis_operations = AnalysisOperationRegistry()
 
     @property
     def session_id(self) -> str | None:
@@ -1809,6 +1820,7 @@ class OriginController:
         self._protected_source_identities.clear()
         self._exclusive = False
         self._poisoned = False
+        self._analysis_operations = AnalysisOperationRegistry()
 
     def _owned_process_termination_warning(self) -> str | None:
         if not self._session_id:
@@ -3113,6 +3125,138 @@ class OriginController:
                 duration_ms=result.duration_ms,
             )
         return result
+
+    @_serialized_operation
+    def run_xfunction(
+        self,
+        *,
+        name: str,
+        parameters: Mapping[str, Any],
+        outputs: Mapping[str, Any] | None = None,
+        create_operation: bool = False,
+        recalculate_mode: str = "none",
+        allow_unverified: bool = False,
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+        try:
+            plan = build_xfunction_plan(
+                name,
+                parameters,
+                outputs=outputs,
+                create_operation=create_operation,
+                recalculate_mode=recalculate_mode,
+                allow_unverified=allow_unverified,
+            )
+        except NativeValidationError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+
+        def execute() -> ResultEnvelope:
+            try:
+                return ResultEnvelope.ok(
+                    execute_xfunction_plan(
+                        self._require_app(), plan, self._analysis_operations
+                    )
+                )
+            except NativeValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+
+        return self._submit(execute, stage="run_xfunction")
+
+    @_serialized_operation
+    def list_analysis_operations(self, *, scope_ref: str | None = None) -> ResultEnvelope:
+        def collect() -> ResultEnvelope:
+            self._require_app()
+            try:
+                operations = self._analysis_operations.list(scope_ref)
+            except NativeValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+            return ResultEnvelope.ok(
+                {
+                    "operations": operations,
+                    "count": len(operations),
+                    "scope_ref": scope_ref,
+                    "managed_only": True,
+                }
+            )
+
+        return self._submit(
+            collect, retryable=True, stage="list_analysis_operations"
+        )
+
+    @_serialized_operation
+    def get_analysis_operation(self, *, operation_ref: str) -> ResultEnvelope:
+        def read() -> ResultEnvelope:
+            try:
+                return ResultEnvelope.ok(
+                    read_analysis_operation(
+                        self._require_app(), operation_ref, self._analysis_operations
+                    )
+                )
+            except NativeValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+
+        return self._submit(read, retryable=True, stage="get_analysis_operation")
+
+    @_serialized_operation
+    def recalculate_analysis(
+        self, *, operation_ref: str, wait: bool = True
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+
+        def recalculate() -> ResultEnvelope:
+            try:
+                return ResultEnvelope.ok(
+                    recalculate_operation(
+                        self._require_app(),
+                        operation_ref,
+                        self._analysis_operations,
+                        wait=wait,
+                    )
+                )
+            except NativeValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+
+        return self._submit(recalculate, stage="recalculate_analysis")
+
+    @_serialized_operation
+    def manage_analysis_template(
+        self,
+        *,
+        action: str,
+        path: str,
+        workbook_ref: str | None = None,
+        overwrite: bool = False,
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+        try:
+            plan = build_analysis_template_plan(
+                action=action,
+                path=path,
+                workbook_ref=workbook_ref,
+                overwrite=overwrite,
+            )
+        except NativeValidationError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+
+        def execute() -> ResultEnvelope:
+            try:
+                data = execute_analysis_template_plan(self._require_app(), plan)
+            except NativeValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+            artifacts = (
+                [Artifact(str(plan.path), "analysis_template")]
+                if plan.action == "save"
+                else []
+            )
+            return ResultEnvelope.ok(data, artifacts=artifacts)
+
+        return self._submit(execute, stage=f"analysis_template_{plan.action}")
 
     @_serialized_operation
     def execute_labtalk(

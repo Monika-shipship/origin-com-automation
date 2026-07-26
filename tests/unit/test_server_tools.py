@@ -44,6 +44,26 @@ class FakeController:
         self.calls.append(("create_plot", kwargs))
         return ResultEnvelope.ok(kwargs)
 
+    def run_xfunction(self, **kwargs):
+        self.calls.append(("run_xfunction", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def list_analysis_operations(self, **kwargs):
+        self.calls.append(("list_analysis_operations", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def get_analysis_operation(self, **kwargs):
+        self.calls.append(("get_analysis_operation", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def recalculate_analysis(self, **kwargs):
+        self.calls.append(("recalculate_analysis", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def manage_analysis_template(self, **kwargs):
+        self.calls.append(("manage_analysis_template", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
 
 def test_server_registers_the_complete_origin_tool_surface():
     server = create_server(controller=FakeController())
@@ -64,6 +84,11 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_read_worksheet",
         "origin_write_worksheet",
         "origin_run_analysis",
+        "origin_run_xfunction",
+        "origin_list_analysis_operations",
+        "origin_get_analysis_operation",
+        "origin_recalculate_analysis",
+        "origin_manage_analysis_template",
         "origin_execute_labtalk",
         "origin_create_plot",
         "origin_configure_graph",
@@ -81,6 +106,48 @@ def test_server_registers_the_complete_origin_tool_surface():
     assert "allow_source_overwrite" in schemas["origin_save_and_replace_source"]
     assert "initial_guess" in schemas["origin_run_analysis"]
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
+
+
+def test_native_tool_schemas_expose_discriminated_parameter_types():
+    tools = asyncio.run(create_server(controller=FakeController()).list_tools())
+    schemas = {tool.name: tool.inputSchema for tool in tools}
+    run_schema = schemas["origin_run_xfunction"]
+
+    parameter_schema = run_schema["properties"]["parameters"]["additionalProperties"]
+    serialized = json.dumps(parameter_schema)
+    for native_type in ["range", "file", "string", "number", "integer", "boolean"]:
+        assert f'"const": "{native_type}"' in serialized
+    assert run_schema["properties"]["recalculate_mode"]["enum"] == [
+        "none",
+        "auto",
+        "manual",
+    ]
+    assert run_schema["properties"]["outputs"]["anyOf"][0][
+        "additionalProperties"
+    ]["additionalProperties"] is False
+
+
+def test_native_tool_decodes_structured_values_before_forwarding():
+    controller = FakeController()
+    server = create_server(controller=controller)
+
+    result = asyncio.run(
+        server.call_tool(
+            "origin_run_xfunction",
+            {
+                "name": "fitlr",
+                "parameters": {"ix": {"type": "range", "value": "[Book1]Data!A:B"}},
+                "outputs": {"oy": {"type": "output", "value": "[Book1]Fit!A:B"}},
+                "create_operation": True,
+                "recalculate_mode": "auto",
+            },
+        )
+    )
+
+    assert result[1]["success"] is True
+    call = next(item for item in controller.calls if item[0] == "run_xfunction")
+    assert call[1]["parameters"]["ix"].value == "[Book1]Data!A:B"
+    assert call[1]["outputs"]["oy"].value == "[Book1]Fit!A:B"
 
 
 def test_preflight_tools_have_strict_discoverable_schemas():

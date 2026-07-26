@@ -16,6 +16,7 @@ from .capabilities import capability_report
 from .com.origin_api import OriginController
 from .contracts import ResultEnvelope
 from .data_inspection import DataInspectionError, inspect_data_source
+from .native.common import FileRef, OutputRef, RangeRef
 from .tools.health import health_check
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -24,6 +25,60 @@ logger = logging.getLogger(__name__)
 
 class StrictOptions(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class NativeRangeInput(StrictOptions):
+    type: Literal["range"]
+    value: str
+
+
+class NativeFileInput(StrictOptions):
+    type: Literal["file"]
+    value: str
+
+
+class NativeStringInput(StrictOptions):
+    type: Literal["string"]
+    value: str
+
+
+class NativeNumberInput(StrictOptions):
+    type: Literal["number"]
+    value: float
+
+
+class NativeIntegerInput(StrictOptions):
+    type: Literal["integer"]
+    value: int
+
+
+class NativeBooleanInput(StrictOptions):
+    type: Literal["boolean"]
+    value: bool
+
+
+class NativeOutputInput(StrictOptions):
+    type: Literal["output"] = "output"
+    value: str
+
+
+NativeParameterInput = Annotated[
+    NativeRangeInput
+    | NativeFileInput
+    | NativeStringInput
+    | NativeNumberInput
+    | NativeIntegerInput
+    | NativeBooleanInput,
+    Field(discriminator="type"),
+]
+
+
+def _decode_native_parameter(value: NativeParameterInput) -> Any:
+    if isinstance(value, NativeRangeInput):
+        return RangeRef(value.value)
+    if isinstance(value, NativeFileInput):
+        return FileRef(value.value)
+    return value.value
 
 
 class AnalysisOptions(StrictOptions):
@@ -171,7 +226,7 @@ def create_server(
             )
             argument_model.model_rebuild(force=True)
             tool.parameters = argument_model.model_json_schema(by_alias=True)
-            if name == "origin_configure_graph":
+            if name in {"origin_configure_graph", "origin_run_xfunction"}:
                 tool.parameters = _inline_local_schema_refs(tool.parameters)
             registered_tools.append(tool)
             return function
@@ -345,6 +400,68 @@ def create_server(
             row_end=row_end,
             filters=[item.model_dump() for item in filters] if filters else None,
             row_order=row_order,
+        )
+
+    @strict_tool(name="origin_run_xfunction")
+    def origin_run_xfunction(
+        name: str,
+        parameters: dict[str, NativeParameterInput],
+        outputs: dict[str, NativeOutputInput] | None = None,
+        create_operation: bool = False,
+        recalculate_mode: Literal["none", "auto", "manual"] = "none",
+        allow_unverified: bool = False,
+    ) -> ResultEnvelope:
+        """Run one validated X-Function with explicit typed parameters and outputs."""
+        return active_controller().run_xfunction(
+            name=name,
+            parameters={
+                key: _decode_native_parameter(value)
+                for key, value in parameters.items()
+            },
+            outputs=(
+                {key: OutputRef(value.value) for key, value in outputs.items()}
+                if outputs
+                else None
+            ),
+            create_operation=create_operation,
+            recalculate_mode=recalculate_mode,
+            allow_unverified=allow_unverified,
+        )
+
+    @strict_tool(name="origin_list_analysis_operations")
+    def origin_list_analysis_operations(scope_ref: str | None = None) -> ResultEnvelope:
+        """List only Analysis Operations created and tracked by this plugin session."""
+        return active_controller().list_analysis_operations(scope_ref=scope_ref)
+
+    @strict_tool(name="origin_get_analysis_operation")
+    def origin_get_analysis_operation(operation_ref: str) -> ResultEnvelope:
+        """Read native state for one stable plugin-managed Analysis Operation ref."""
+        return active_controller().get_analysis_operation(operation_ref=operation_ref)
+
+    @strict_tool(name="origin_recalculate_analysis")
+    def origin_recalculate_analysis(
+        operation_ref: str,
+        wait: bool = True,
+    ) -> ResultEnvelope:
+        """Recalculate one plugin-managed native Analysis Operation without retrying mutation."""
+        return active_controller().recalculate_analysis(
+            operation_ref=operation_ref,
+            wait=wait,
+        )
+
+    @strict_tool(name="origin_manage_analysis_template")
+    def origin_manage_analysis_template(
+        action: Literal["save", "load"],
+        path: str,
+        workbook_ref: str | None = None,
+        overwrite: bool = False,
+    ) -> ResultEnvelope:
+        """Save or load an explicit Origin Analysis Template with path and overwrite checks."""
+        return active_controller().manage_analysis_template(
+            action=action,
+            path=path,
+            workbook_ref=workbook_ref,
+            overwrite=overwrite,
         )
 
     @strict_tool(name="origin_execute_labtalk")
