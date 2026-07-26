@@ -133,6 +133,11 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_apply_graph_template",
         "origin_inspect_png",
         "origin_view_graph",
+        "origin_plan_figure",
+        "origin_execute_figure",
+        "origin_submit_batch",
+        "origin_task_status",
+        "origin_cancel_task",
         "origin_execute_labtalk",
         "origin_create_plot",
         "origin_configure_graph",
@@ -217,6 +222,28 @@ def test_view_graph_returns_text_envelope_and_image_content(tmp_path):
     image = next(item for item in content if item.type == "image")
     assert image.mimeType == "image/png"
     assert image.data
+
+
+def test_figurespec_schema_and_plan_tool_are_strict_and_digest_bound(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    spec = {
+        "route": "data_to_project",
+        "input": {"path": str(source), "worksheet_ref": "[Book1]Data"},
+        "plots": [],
+        "outputs": {"project_path": str(tmp_path / "out.opju")},
+    }
+    server = create_server(controller=FakeController())
+    result = asyncio.run(server.call_tool("origin_plan_figure", {"spec": spec}))
+    assert result[1]["success"] is True
+    assert result[1]["data"]["executor_executable"] is True
+    assert len(result[1]["data"]["digest"]) == 64
+
+    schemas = {tool.name: tool.inputSchema for tool in asyncio.run(server.list_tools())}
+    figure = schemas["origin_plan_figure"]["properties"]["spec"]
+    assert figure["additionalProperties"] is False
+    assert "route" in figure["properties"]
+    assert "plan_digest" in schemas["origin_execute_figure"]["properties"]
 
 
 def test_native_tool_schemas_expose_discriminated_parameter_types():

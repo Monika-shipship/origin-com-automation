@@ -26,6 +26,9 @@ from .graphs.preview import inspect_png
 from .graphs.templates import discover_templates
 from .native.common import FileRef, OutputRef, RangeRef
 from .tools.health import health_check
+from .workflows.executor import execute_figure
+from .workflows.figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
+from .workflows.tasks import TaskManager
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
@@ -272,6 +275,7 @@ def create_server(
     initial_controller = controller or OriginController()
     factory = controller_factory or OriginController
     controller_box = {"active": initial_controller}
+    workflow_tasks = TaskManager(max_results=100)
 
     def active_controller() -> OriginController:
         return controller_box["active"]
@@ -292,6 +296,9 @@ def create_server(
                 "origin_run_analysis",
                 "origin_run_xfunction",
                 "origin_transform_worksheet",
+                "origin_plan_figure",
+                "origin_execute_figure",
+                "origin_submit_batch",
             }:
                 tool.parameters = _inline_local_schema_refs(tool.parameters)
             registered_tools.append(tool)
@@ -800,6 +807,137 @@ def create_server(
             export_format=export_format,
             overwrite=overwrite,
         )
+
+    @strict_tool(name="origin_plan_figure")
+    def origin_plan_figure(spec: FigureSpec) -> ResultEnvelope:
+        """Preflight a declarative figure route and return its immutable execution digest."""
+        controller = active_controller()
+        version = getattr(controller, "origin_version", None) or getattr(
+            controller, "_origin_version", None
+        )
+        return ResultEnvelope.ok(
+            compile_figure_spec(spec, origin_version=version),
+            origin_version=version,
+        )
+
+    @strict_tool(name="origin_execute_figure")
+    def origin_execute_figure(spec: FigureSpec, plan_digest: str) -> ResultEnvelope:
+        """Submit one digest-approved FigureSpec to the serialized background workflow queue."""
+        actual_digest = figure_spec_digest(spec)
+        if actual_digest != plan_digest:
+            return ResultEnvelope.fail(
+                "FIGURE_PLAN_CHANGED",
+                "FigureSpec no longer matches the approved plan digest",
+                data={"expected_digest": plan_digest, "actual_digest": actual_digest},
+            )
+        controller = active_controller()
+        version = getattr(controller, "origin_version", None) or getattr(
+            controller, "_origin_version", None
+        )
+        plan = compile_figure_spec(spec, origin_version=version)
+        if not plan["executor_executable"]:
+            return ResultEnvelope.fail(
+                "FIGURE_PREFLIGHT_BLOCKED",
+                "; ".join(plan["blockers"]),
+                data=plan,
+            )
+        task_id = workflow_tasks.submit(
+            f"figure:{spec.route}",
+            lambda context: execute_figure(
+                active_controller(),
+                spec,
+                expected_digest=plan_digest,
+                context=context,
+            ),
+        )
+        return ResultEnvelope.ok(
+            {
+                "task_id": task_id,
+                "state": "queued",
+                "plan_digest": plan_digest,
+                "next_tool": "origin_task_status",
+            },
+            origin_version=version,
+        )
+
+    @strict_tool(name="origin_submit_batch")
+    def origin_submit_batch(
+        specs: list[FigureSpec],
+        plan_digests: list[str],
+        on_error: Literal["stop", "continue"] = "stop",
+    ) -> ResultEnvelope:
+        """Submit explicit FigureSpecs for one-at-a-time execution with no replay."""
+        if not specs or len(specs) != len(plan_digests):
+            return ResultEnvelope.fail(
+                "BATCH_PLAN_INVALID",
+                "specs and plan_digests must be non-empty and have equal length",
+            )
+        for index, (spec, digest) in enumerate(zip(specs, plan_digests, strict=True)):
+            if figure_spec_digest(spec) != digest:
+                return ResultEnvelope.fail(
+                    "BATCH_PLAN_CHANGED",
+                    f"Batch FigureSpec {index} does not match its approved digest",
+                )
+            version = getattr(active_controller(), "_origin_version", None)
+            plan = compile_figure_spec(spec, origin_version=version)
+            if not plan["executor_executable"]:
+                return ResultEnvelope.fail(
+                    "BATCH_PREFLIGHT_BLOCKED",
+                    f"Batch FigureSpec {index}: {'; '.join(plan['blockers'])}",
+                    data={"index": index, "plan": plan},
+                )
+
+        def execute_serial(context):
+            results = []
+            for index, (spec, digest) in enumerate(zip(specs, plan_digests, strict=True)):
+                result = execute_figure(
+                    active_controller(),
+                    spec,
+                    expected_digest=digest,
+                    context=context,
+                )
+                results.append({"index": index, "result": result})
+                if not result.get("success", False) and on_error == "stop":
+                    break
+            return {
+                "success": all(item["result"].get("success", False) for item in results),
+                "total": len(specs),
+                "completed": len(results),
+                "stopped_early": len(results) < len(specs),
+                "results": results,
+            }
+
+        task_id = workflow_tasks.submit("batch", execute_serial)
+        return ResultEnvelope.ok(
+            {
+                "task_id": task_id,
+                "state": "queued",
+                "items": len(specs),
+                "on_error": on_error,
+                "next_tool": "origin_task_status",
+            }
+        )
+
+    @strict_tool(name="origin_task_status")
+    def origin_task_status(task_id: str) -> ResultEnvelope:
+        """Read queued/running/terminal workflow state and completed stages."""
+        try:
+            return ResultEnvelope.ok(workflow_tasks.status(task_id))
+        except KeyError:
+            return ResultEnvelope.fail("TASK_NOT_FOUND", f"Workflow task not found: {task_id}")
+
+    @strict_tool(name="origin_cancel_task")
+    def origin_cancel_task(task_id: str) -> ResultEnvelope:
+        """Cancel only a pending workflow; active Origin mutations are never interrupted."""
+        try:
+            status = workflow_tasks.cancel(task_id)
+        except KeyError:
+            return ResultEnvelope.fail("TASK_NOT_FOUND", f"Workflow task not found: {task_id}")
+        if status.get("error_code"):
+            return ResultEnvelope.fail(
+                status["error_code"], status["error_message"], data=status
+            )
+        return ResultEnvelope.ok(status)
 
     @strict_tool(name="origin_close_project")
     def origin_close_project(discard_changes: bool = False) -> ResultEnvelope:
