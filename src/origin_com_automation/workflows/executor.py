@@ -61,14 +61,16 @@ def execute_figure(
         session_started = True
 
         if spec.route == "data_to_project":
+            input_stage = "connector" if spec.input.source_mode == "linked" else "input"
             input_result = run(
-                "input",
+                input_stage,
                 lambda: controller.import_data(
                     file_path=plan["resolved_input"],
                     worksheet_name=spec.input.worksheet_ref,
                     sheet_name=spec.input.sheet_name,
                     has_header=spec.input.has_header,
                     target_mode="new_workbook",
+                    source_mode=spec.input.source_mode,
                 ),
             )
         else:
@@ -80,14 +82,25 @@ def execute_figure(
             return {"success": False, **failed, "completed_stages": completed, "artifacts": artifacts, "warnings": warnings}
 
         for analysis in spec.analyses:
+            if analysis.backend == "origin_native" and analysis.create_operation:
+                analysis_stage = "native_operation"
+            elif analysis.backend == "origin_native":
+                analysis_stage = "native_analysis"
+            else:
+                analysis_stage = "analysis"
             result = run(
-                "analysis",
+                analysis_stage,
                 lambda analysis=analysis: controller.run_analysis(
                     worksheet_name=analysis.worksheet_ref,
                     method=analysis.method,
                     x_column=analysis.x_column,
                     y_column=analysis.y_column,
-                    options=analysis.options,
+                    options={
+                        **analysis.options,
+                        "backend": analysis.backend,
+                        "create_operation": analysis.create_operation,
+                        "recalculate_mode": analysis.recalculate_mode,
+                    },
                     row_start=analysis.row_start,
                     row_end=analysis.row_end,
                 ),
@@ -171,4 +184,3 @@ def execute_figure(
             warnings.extend(shutdown.warnings)
             if shutdown.success and "shutdown" not in completed:
                 completed.append("shutdown")
-

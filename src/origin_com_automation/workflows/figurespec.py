@@ -21,6 +21,7 @@ class FigureInput(StrictModel):
     worksheet_ref: str | None = None
     sheet_name: str | None = None
     has_header: bool | None = None
+    source_mode: Literal["linked", "snapshot"] = "linked"
 
 
 class FigureAnalysis(StrictModel):
@@ -30,8 +31,27 @@ class FigureAnalysis(StrictModel):
     x_column: str | int
     y_column: str | int
     options: dict[str, Any] = Field(default_factory=dict)
+    backend: Literal["origin_native", "python"] = "origin_native"
+    create_operation: bool = True
+    recalculate_mode: Literal["none", "auto", "manual"] = "auto"
     row_start: int = 0
     row_end: int = -1
+
+    @model_validator(mode="after")
+    def execution_modes_are_explicit(self) -> "FigureAnalysis":
+        reserved = sorted(
+            set(self.options) & {"backend", "create_operation", "recalculate_mode"}
+        )
+        if reserved:
+            raise ValueError(
+                "analysis options contain reserved execution fields: "
+                + ", ".join(reserved)
+            )
+        if not self.create_operation and self.recalculate_mode != "none":
+            raise ValueError(
+                "recalculate_mode must be none when create_operation is false"
+            )
+        return self
 
 
 class FigurePlot(StrictModel):
@@ -125,12 +145,21 @@ def compile_figure_spec(
             )
         elif entry["status"] == "supported_unverified":
             warnings.append(f"plot {plot.id} uses a supported-unverified graph route")
+    input_stage = (
+        "connector"
+        if spec.route == "data_to_project" and spec.input.source_mode == "linked"
+        else "input"
+    )
     stages = [
         {"id": "preflight", "mutation": False},
         {"id": "start", "mutation": True},
-        {"id": "input", "mutation": True},
+        {"id": input_stage, "mutation": True},
     ]
-    if spec.analyses:
+    if any(item.backend == "origin_native" and item.create_operation for item in spec.analyses):
+        stages.append({"id": "native_operation", "mutation": True})
+    if any(item.backend == "origin_native" and not item.create_operation for item in spec.analyses):
+        stages.append({"id": "native_analysis", "mutation": True})
+    if any(item.backend == "python" for item in spec.analyses):
         stages.append({"id": "analysis", "mutation": True})
     if spec.plots:
         stages.append({"id": "plot", "mutation": True})
@@ -152,7 +181,14 @@ def compile_figure_spec(
         "warnings": warnings,
         "stages": stages,
         "plot_capabilities": plot_capabilities,
+        "execution_modes": {
+            "source_mode": spec.input.source_mode,
+            "analysis_backends": sorted({item.backend for item in spec.analyses}),
+            "native_operation_count": sum(
+                item.backend == "origin_native" and item.create_operation
+                for item in spec.analyses
+            ),
+        },
         "resolved_input": str(source),
         "resolved_project_output": str(output),
     }
-

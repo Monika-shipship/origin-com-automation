@@ -42,6 +42,61 @@ def test_figurespec_digest_is_stable_and_changes_with_scientific_field():
     assert figure_spec_digest(first) != figure_spec_digest(changed)
 
 
+def test_figurespec_digest_changes_with_source_and_analysis_execution_modes():
+    native = minimal_spec(
+        analyses=[
+            {
+                "id": "fit",
+                "method": "linear_fit",
+                "worksheet_ref": "[Book1]Data",
+                "x_column": "A",
+                "y_column": "B",
+            }
+        ]
+    )
+    snapshot = minimal_spec(
+        input={
+            "path": "C:/data/input.csv",
+            "worksheet_ref": "[Book1]Data",
+            "source_mode": "snapshot",
+        },
+        analyses=[
+            {
+                "id": "fit",
+                "method": "linear_fit",
+                "worksheet_ref": "[Book1]Data",
+                "x_column": "A",
+                "y_column": "B",
+                "backend": "python",
+                "create_operation": False,
+                "recalculate_mode": "none",
+            }
+        ],
+    )
+
+    assert native.input.source_mode == "linked"
+    assert native.analyses[0].backend == "origin_native"
+    assert native.analyses[0].create_operation is True
+    assert native.analyses[0].recalculate_mode == "auto"
+    assert figure_spec_digest(native) != figure_spec_digest(snapshot)
+
+
+def test_figurespec_analysis_execution_modes_are_not_duplicated_inside_options():
+    with pytest.raises(ValidationError, match="reserved"):
+        minimal_spec(
+            analyses=[
+                {
+                    "id": "fit",
+                    "method": "linear_fit",
+                    "worksheet_ref": "[Book1]Data",
+                    "x_column": "A",
+                    "y_column": "B",
+                    "options": {"backend": "python"},
+                }
+            ]
+        )
+
+
 def test_figurespec_rejects_unknown_fields_and_duplicate_ids():
     with pytest.raises(ValidationError, match="Extra inputs"):
         minimal_spec(typo=True)
@@ -85,6 +140,36 @@ def test_compile_data_route_checks_input_and_output_collision(tmp_path):
     plan = compile_figure_spec(spec, origin_version="10.1.0.178")
     assert plan["executor_executable"] is False
     assert any("already exists" in item for item in plan["blockers"])
+
+
+def test_compile_exposes_connector_and_native_operation_stages(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    spec = minimal_spec(
+        input={"path": str(source), "worksheet_ref": "[Book1]Data"},
+        analyses=[
+            {
+                "id": "fit",
+                "method": "linear_fit",
+                "worksheet_ref": "[Book1]Data",
+                "x_column": "A",
+                "y_column": "B",
+            }
+        ],
+        outputs={"project_path": str(tmp_path / "result.opju")},
+    )
+
+    plan = compile_figure_spec(spec, origin_version="10.1.0.178")
+
+    assert plan["executor_executable"] is True
+    stage_ids = [stage["id"] for stage in plan["stages"]]
+    assert "connector" in stage_ids
+    assert "native_operation" in stage_ids
+    assert plan["execution_modes"] == {
+        "source_mode": "linked",
+        "analysis_backends": ["origin_native"],
+        "native_operation_count": 1,
+    }
 
 
 class WorkflowController:
@@ -154,6 +239,44 @@ def test_execute_figure_follows_compiled_key_path_and_always_shuts_down(tmp_path
         "start", "import_data", "create_graph", "save_project_copy", "read_worksheet", "shutdown"
     ]
     assert result["completed_stages"][-1] == "shutdown"
+
+
+def test_execute_figure_forwards_linked_and_native_defaults(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n3,4\n", encoding="utf-8")
+    spec = minimal_spec(
+        input={"path": str(source), "worksheet_ref": "[Book1]Data"},
+        analyses=[
+            {
+                "id": "fit",
+                "method": "linear_fit",
+                "worksheet_ref": "[Book1]Data",
+                "x_column": "A",
+                "y_column": "B",
+            }
+        ],
+        outputs={"project_path": str(tmp_path / "result.opju")},
+    )
+    controller = WorkflowController()
+
+    result = execute_figure(
+        controller,
+        spec,
+        expected_digest=figure_spec_digest(spec),
+        context=Context(),
+    )
+
+    assert result["success"] is True
+    imported = next(kwargs for name, kwargs in controller.calls if name == "import_data")
+    analyzed = next(kwargs for name, kwargs in controller.calls if name == "run_analysis")
+    assert imported["source_mode"] == "linked"
+    assert analyzed["options"] == {
+        "backend": "origin_native",
+        "create_operation": True,
+        "recalculate_mode": "auto",
+    }
+    assert "connector" in result["completed_stages"]
+    assert "native_operation" in result["completed_stages"]
 
 
 def test_execute_figure_stops_after_first_failed_stage(tmp_path):
