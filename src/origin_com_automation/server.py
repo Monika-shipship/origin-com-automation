@@ -242,6 +242,11 @@ class WorksheetTransformOptions(StrictOptions):
     name: str | None = None
     left: str | None = None
     right: str | None = None
+    execution_mode: Literal["origin_native", "materialized"] = "origin_native"
+    before_script: str = ""
+    row_start: Annotated[int, Field(ge=0)] = 0
+    row_end: Annotated[int, Field(ge=-1)] = -1
+    recalculate_mode: Literal["none", "auto", "manual"] = "auto"
 
 
 def _inline_local_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
@@ -496,6 +501,27 @@ def create_server(
             destination_ref=destination_ref,
             action=action,
             options=options.model_dump(exclude_none=True, by_alias=True) if options else None,
+        )
+
+    @strict_tool(name="origin_set_column_formula")
+    def origin_set_column_formula(
+        worksheet_ref: str,
+        column: str | int,
+        formula: str,
+        before_script: str = "",
+        row_start: Annotated[int, Field(ge=0)] = 0,
+        row_end: Annotated[int, Field(ge=-1)] = -1,
+        recalculate_mode: Literal["none", "auto", "manual"] = "auto",
+    ) -> ResultEnvelope:
+        """Set and verify an editable Origin F(x) formula on an existing worksheet column."""
+        return active_controller().set_column_formula(
+            worksheet_ref=worksheet_ref,
+            column=column,
+            formula=formula,
+            before_script=before_script,
+            row_start=row_start,
+            row_end=row_end,
+            recalculate_mode=recalculate_mode,
         )
 
     @strict_tool(name="origin_manage_connector")

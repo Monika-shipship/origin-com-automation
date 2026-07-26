@@ -53,6 +53,30 @@ ARITHMETIC_OPERATORS = {
     "power": operator.pow,
 }
 
+ORIGIN_ARITHMETIC_OPERATORS = {
+    "add": "+",
+    "subtract": "-",
+    "multiply": "*",
+    "divide": "/",
+    "power": "^",
+}
+
+
+def build_calculated_column_formula(
+    *,
+    left_column: str,
+    operator_name: str,
+    right_column: str,
+) -> str:
+    left = str(left_column).strip()
+    right = str(right_column).strip()
+    if not left or not right:
+        raise TransformValidationError("calculated column requires left and right columns")
+    operation = ORIGIN_ARITHMETIC_OPERATORS.get(str(operator_name).strip().lower())
+    if operation is None:
+        raise TransformValidationError("calculated column operator is not supported")
+    return f"col({left}){operation}col({right})"
+
 
 def _records(frame: pd.DataFrame) -> list[list[Any]]:
     result: list[list[Any]] = []
@@ -189,4 +213,3 @@ def transform_table(
         input_rows=input_rows,
         output_rows=len(frame),
     )
-

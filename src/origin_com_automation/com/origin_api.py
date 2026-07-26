@@ -26,6 +26,11 @@ from uuid import uuid4
 from ..contracts import Artifact, ResultEnvelope
 from ..config import PluginConfig
 from ..native.common import NativeValidationError, RangeRef
+from ..native.formulas import (
+    build_column_formula_plan,
+    column_letters,
+    execute_column_formula_plan,
+)
 from ..native.operations import (
     AnalysisOperationRegistry,
     build_analysis_template_plan,
@@ -39,7 +44,11 @@ from ..objects.connectors import build_connector_plan, connector_type_for_source
 from ..objects.images import build_image_plan
 from ..objects.matrices import build_matrix_plan
 from ..objects.validation import ObjectPlanError
-from ..objects.worksheets import TransformValidationError, transform_table
+from ..objects.worksheets import (
+    TransformValidationError,
+    build_calculated_column_formula,
+    transform_table,
+)
 from ..objects.project import ProjectObjectError, build_folder_plan, build_note_plan
 from ..graphs.catalog import GraphCatalogError, validate_graph_request
 from ..graphs.layout import GraphLayoutError, build_layout_plan
@@ -558,6 +567,12 @@ def _readback_matrix(
         ]
         for r in range(rows)
     ]
+
+
+def _read_column_values(column: Any, *, row_start: int, row_end: int) -> list[Any]:
+    raw_values = column.GetData(ORIGIN_ARRAY2D_VARIANT, row_start, row_end)
+    rows = table_from_com_value(raw_values)
+    return [_normalize_cell(row[0]) if row else None for row in rows]
 
 
 def _matrix_mismatches(
@@ -2794,6 +2809,65 @@ class OriginController:
         return self._submit(describe, retryable=True)
 
     @_serialized_operation
+    def set_column_formula(
+        self,
+        *,
+        worksheet_ref: str,
+        column: str | int,
+        formula: str,
+        before_script: str = "",
+        row_start: int = 0,
+        row_end: int = -1,
+        recalculate_mode: str = "auto",
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            sheet = _resolve_worksheet(app, worksheet_ref)
+            try:
+                resolved_index = _column_index(sheet, column)
+                plan = build_column_formula_plan(
+                    worksheet_ref=_worksheet_reference(worksheet_ref),
+                    column=resolved_index,
+                    formula=formula,
+                    before_script=before_script,
+                    row_start=row_start,
+                    row_end=row_end,
+                    recalculate_mode=recalculate_mode,
+                )
+                resolved_column = _worksheet_column(sheet, resolved_index)
+                data = execute_column_formula_plan(app, resolved_column, plan)
+                values = _read_column_values(
+                    resolved_column,
+                    row_start=plan.row_start,
+                    row_end=plan.row_end,
+                )
+            except (LookupError, NativeValidationError) as exc:
+                code = getattr(exc, "code", "COLUMN_FORMULA_INVALID")
+                return ResultEnvelope.fail(code, str(exc))
+            except Exception as exc:
+                return ResultEnvelope.fail(
+                    "COLUMN_FORMULA_UNCONFIRMED",
+                    f"Origin formula value readback failed: {exc}",
+                )
+            data.update(
+                {
+                    "value_readback_verified": True,
+                    "value_readback": values if len(values) <= 25 else [
+                        values[0], values[len(values) // 2], values[-1]
+                    ],
+                    "value_count": len(values),
+                    "non_empty_count": sum(value is not None for value in values),
+                }
+            )
+            return ResultEnvelope.ok(data)
+
+        return self._submit(execute, stage="set_column_formula")
+
+    @_serialized_operation
     def transform_worksheet(
         self,
         *,
@@ -2805,6 +2879,119 @@ class OriginController:
         guard = self._guard_mutation()
         if guard:
             return guard
+        normalized_action = action.strip().lower()
+        transform_options = dict(options or {})
+        execution_mode = str(
+            transform_options.pop("execution_mode", "origin_native")
+        ).strip().lower()
+        before_script = str(transform_options.pop("before_script", ""))
+        row_start = transform_options.pop("row_start", 0)
+        row_end = transform_options.pop("row_end", -1)
+        recalculate_mode = str(
+            transform_options.pop("recalculate_mode", "auto")
+        ).strip().lower()
+
+        if execution_mode not in {"origin_native", "materialized"}:
+            return ResultEnvelope.fail(
+                "WORKSHEET_TRANSFORM_INVALID",
+                f"unsupported worksheet execution_mode: {execution_mode}",
+            )
+
+        if normalized_action == "calculated_column" and execution_mode == "origin_native":
+            if _worksheet_reference(source_ref) != _worksheet_reference(destination_ref):
+                return ResultEnvelope.fail(
+                    "NATIVE_CALCULATED_COLUMN_REQUIRES_SAME_WORKSHEET",
+                    "Origin-native calculated columns must be added to their source worksheet",
+                )
+
+            def execute_native_formula() -> ResultEnvelope:
+                app = self._require_app()
+                sheet = _resolve_worksheet(app, source_ref)
+                name = str(transform_options.get("name", "")).strip()
+                if not name:
+                    return ResultEnvelope.fail(
+                        "WORKSHEET_TRANSFORM_INVALID",
+                        "calculated column name must be non-empty",
+                    )
+                unknown = sorted(
+                    set(transform_options) - {"name", "left", "operator", "right"}
+                )
+                if unknown:
+                    return ResultEnvelope.fail(
+                        "WORKSHEET_TRANSFORM_INVALID",
+                        f"unknown options for calculated_column: {', '.join(unknown)}",
+                    )
+                existing_columns = _collection_items(_safe_attr(sheet, "Columns"))
+                existing_names = {
+                    str(_safe_attr(item, field, "")).strip().casefold()
+                    for item in existing_columns
+                    for field in ("Name", "LongName")
+                    if str(_safe_attr(item, field, "")).strip()
+                }
+                if name.casefold() in existing_names:
+                    return ResultEnvelope.fail(
+                        "CALCULATED_COLUMN_EXISTS",
+                        "The calculated column already exists; use origin_set_column_formula to update it",
+                    )
+                try:
+                    left_index = _column_index(sheet, str(transform_options.get("left", "")))
+                    right_index = _column_index(sheet, str(transform_options.get("right", "")))
+                    formula = build_calculated_column_formula(
+                        left_column=column_letters(left_index),
+                        operator_name=str(transform_options.get("operator", "")),
+                        right_column=column_letters(right_index),
+                    )
+                    target_index = int(_safe_attr(sheet, "Cols", len(existing_columns)))
+                    sheet.Cols = target_index + 1
+                    target_column = _worksheet_column(sheet, target_index)
+                    target_column.LongName = name
+                    if str(_safe_attr(target_column, "LongName", "")) != name:
+                        return ResultEnvelope.fail(
+                            "CALCULATED_COLUMN_LABEL_UNCONFIRMED",
+                            "Origin did not preserve the calculated column label",
+                        )
+                    plan = build_column_formula_plan(
+                        worksheet_ref=_worksheet_reference(source_ref),
+                        column=target_index,
+                        formula=formula,
+                        before_script=before_script,
+                        row_start=row_start,
+                        row_end=row_end,
+                        recalculate_mode=recalculate_mode,
+                    )
+                    data = execute_column_formula_plan(app, target_column, plan)
+                    values = _read_column_values(
+                        target_column,
+                        row_start=plan.row_start,
+                        row_end=plan.row_end,
+                    )
+                except (LookupError, NativeValidationError, TransformValidationError) as exc:
+                    return ResultEnvelope.fail(
+                        getattr(exc, "code", "WORKSHEET_TRANSFORM_INVALID"),
+                        str(exc),
+                    )
+                data.update(
+                    {
+                        "action": normalized_action,
+                        "execution_mode": "origin_native",
+                        "source_ref": source_ref,
+                        "destination_ref": destination_ref,
+                        "column_label": name,
+                        "value_readback_verified": True,
+                        "value_readback": values if len(values) <= 25 else [
+                            values[0], values[len(values) // 2], values[-1]
+                        ],
+                        "value_count": len(values),
+                        "non_empty_count": sum(value is not None for value in values),
+                    }
+                )
+                return ResultEnvelope.ok(data)
+
+            return self._submit(
+                execute_native_formula,
+                stage="transform_worksheet_calculated_column_native",
+            )
+
         if source_ref == destination_ref:
             return ResultEnvelope.fail(
                 "IN_PLACE_TRANSFORM_BLOCKED",
@@ -2827,8 +3014,8 @@ class OriginController:
                 transformed = transform_table(
                     source_rows,
                     columns,
-                    action=action,
-                    options=dict(options or {}),
+                    action=normalized_action,
+                    options=transform_options,
                 )
             except TransformValidationError as exc:
                 return ResultEnvelope.fail(exc.code, str(exc))
@@ -2856,6 +3043,7 @@ class OriginController:
             mismatches = _matrix_mismatches(transformed.rows, readback)
             data = {
                 "action": transformed.action,
+                "execution_mode": "materialized",
                 "source_ref": source_ref,
                 "destination_ref": destination_ref,
                 "input_rows": transformed.input_rows,

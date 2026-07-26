@@ -1,6 +1,10 @@
 import pytest
 
-from origin_com_automation.objects.worksheets import TransformValidationError, transform_table
+from origin_com_automation.objects.worksheets import (
+    TransformValidationError,
+    build_calculated_column_formula,
+    transform_table,
+)
 
 
 ROWS = [
@@ -91,7 +95,16 @@ def test_calculated_column_uses_allowlisted_arithmetic_operation():
     assert result.rows == [[1, 2, 3], [3, 4, 7]]
 
 
+def test_calculated_column_compiles_to_origin_formula_by_default():
+    formula = build_calculated_column_formula(
+        left_column="A",
+        operator_name="multiply",
+        right_column="B",
+    )
+
+    assert formula == "col(A)*col(B)"
+
+
 def test_transform_rejects_unknown_options():
     with pytest.raises(TransformValidationError, match="unknown options"):
         transform_table(ROWS, COLUMNS, action="sort", options={"by": ["x"], "typo": 1})
-

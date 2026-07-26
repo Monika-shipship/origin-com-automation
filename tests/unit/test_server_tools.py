@@ -72,6 +72,10 @@ class FakeController:
         self.calls.append(("transform_worksheet", kwargs))
         return ResultEnvelope.ok(kwargs)
 
+    def set_column_formula(self, **kwargs):
+        self.calls.append(("set_column_formula", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
     def manage_connector(self, **kwargs):
         self.calls.append(("manage_connector", kwargs))
         return ResultEnvelope.ok(kwargs)
@@ -134,6 +138,7 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_recalculate_analysis",
         "origin_manage_analysis_template",
         "origin_transform_worksheet",
+        "origin_set_column_formula",
         "origin_manage_connector",
         "origin_manage_matrix",
         "origin_manage_image",
@@ -169,6 +174,10 @@ def test_server_registers_the_complete_origin_tool_surface():
     assert "result_string_variables" in schemas["origin_execute_labtalk"]
     assert "allow_source_overwrite" in schemas["origin_save_and_replace_source"]
     assert "initial_guess" in schemas["origin_run_analysis"]
+    assert "before_script" in schemas["origin_set_column_formula"]
+    assert "row_start" in schemas["origin_set_column_formula"]
+    assert "row_end" in schemas["origin_set_column_formula"]
+    assert "recalculate_mode" in schemas["origin_set_column_formula"]
     analysis_schema = json.loads(schemas["origin_run_analysis"])["properties"]["options"]["anyOf"][0]
     assert analysis_schema["additionalProperties"] is False
     for option_name in [
@@ -204,6 +213,15 @@ def test_source_and_analysis_schemas_default_to_editable_origin_workflows():
     assert properties["create_operation"]["default"] is True
     assert properties["recalculate_mode"]["default"] == "auto"
 
+    transform_options = schemas["origin_transform_worksheet"]["properties"]["options"]["anyOf"][0]
+    transform_properties = transform_options["properties"]
+    assert transform_properties["execution_mode"]["default"] == "origin_native"
+    assert set(transform_properties["execution_mode"]["enum"]) == {
+        "origin_native",
+        "materialized",
+    }
+    assert transform_properties["recalculate_mode"]["default"] == "auto"
+
 
 def test_import_tool_forwards_linked_source_mode_by_default():
     controller = FakeController()
@@ -224,6 +242,86 @@ def test_import_tool_forwards_linked_source_mode_by_default():
                 "has_header": None,
                 "target_mode": "new_workbook",
                 "source_mode": "linked",
+            },
+        )
+    ]
+
+
+def test_formula_tool_forwards_origin_native_formula_contract():
+    controller = FakeController()
+    server = create_server(controller=controller)
+
+    result = asyncio.run(
+        server.call_tool(
+            "origin_set_column_formula",
+            {
+                "worksheet_ref": "[Book1]Data",
+                "column": "C",
+                "formula": "col(A)*col(B)",
+                "before_script": "double scale=1;",
+                "row_start": 0,
+                "row_end": 25,
+            },
+        )
+    )
+
+    assert result[1]["success"] is True
+    assert controller.calls == [
+        (
+            "set_column_formula",
+            {
+                "worksheet_ref": "[Book1]Data",
+                "column": "C",
+                "formula": "col(A)*col(B)",
+                "before_script": "double scale=1;",
+                "row_start": 0,
+                "row_end": 25,
+                "recalculate_mode": "auto",
+            },
+        )
+    ]
+
+
+def test_calculated_column_transform_forwards_native_defaults():
+    controller = FakeController()
+    server = create_server(controller=controller)
+
+    result = asyncio.run(
+        server.call_tool(
+            "origin_transform_worksheet",
+            {
+                "source_ref": "[Book1]Data",
+                "destination_ref": "[Book1]Data",
+                "action": "calculated_column",
+                "options": {
+                    "name": "product",
+                    "left": "A",
+                    "operator": "multiply",
+                    "right": "B",
+                },
+            },
+        )
+    )
+
+    assert result[1]["success"] is True
+    assert controller.calls == [
+        (
+            "transform_worksheet",
+            {
+                "source_ref": "[Book1]Data",
+                "destination_ref": "[Book1]Data",
+                "action": "calculated_column",
+                "options": {
+                    "operator": "multiply",
+                    "name": "product",
+                    "left": "A",
+                    "right": "B",
+                    "execution_mode": "origin_native",
+                    "before_script": "",
+                    "row_start": 0,
+                    "row_end": -1,
+                    "recalculate_mode": "auto",
+                },
             },
         )
     ]
