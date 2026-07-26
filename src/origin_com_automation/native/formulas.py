@@ -6,7 +6,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from .common import NativeValidationError
+from .common import NativeValidationError, labtalk_range
 
 
 RECALCULATION_MODES = {"none": 0, "auto": 1, "manual": 2}
@@ -117,7 +117,9 @@ def build_column_formula_plan(
         formula_range = f"[{row_start + 1}:]"
     else:
         formula_range = f"[{row_start + 1}:{row_end + 1}]"
-    target_range = f"{safe_worksheet}!{safe_column_name}{formula_range}"
+    target_range = labtalk_range(
+        f"{safe_worksheet}!{safe_column_name}{formula_range}"
+    )
     recalculate_value = RECALCULATION_MODES[recalculate_mode]
     command = (
         f"csetvalue col:={target_range} formula:={quoted_formula} "

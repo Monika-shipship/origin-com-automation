@@ -532,6 +532,8 @@ def create_server(
         connector_type: Literal["csv", "excel"] | None = None,
         keep_connector: bool = True,
         keep_data: bool | None = None,
+        selection: str | None = None,
+        has_header: bool | None = None,
     ) -> ResultEnvelope:
         """Create, inspect, refresh, or explicitly disconnect a CSV/Excel Data Connector."""
         return active_controller().manage_connector(
@@ -541,6 +543,8 @@ def create_server(
             connector_type=connector_type,
             keep_connector=keep_connector,
             keep_data=keep_data,
+            selection=selection,
+            has_header=has_header,
         )
 
     @strict_tool(name="origin_manage_matrix")

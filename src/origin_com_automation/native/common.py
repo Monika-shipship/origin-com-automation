@@ -22,6 +22,8 @@ class NativeValidationError(ValueError):
 
 _UNSAFE_REF = re.compile(r'[;"\r\n{}]')
 _UNSAFE_STRING = re.compile(r'[;"\r\n{}]')
+_WORKSHEET_RANGE = re.compile(r"^\[([^\]]+)\]([^!]+)!(.+)$")
+_SHORT_NAME = re.compile(r"^(?:[A-Za-z_][A-Za-z0-9_]*|\d+)$")
 
 
 def _validate_reference(value: str, kind: str) -> str:
@@ -58,11 +60,23 @@ class FileRef:
         object.__setattr__(self, "value", normalized)
 
 
+def labtalk_range(value: str) -> str:
+    """Quote workbook or worksheet long names in a validated range."""
+
+    match = _WORKSHEET_RANGE.fullmatch(value)
+    if match is None:
+        return value
+    book, sheet, tail = match.groups()
+    rendered_book = book if _SHORT_NAME.fullmatch(book) else f'"{book}"'
+    rendered_sheet = sheet if _SHORT_NAME.fullmatch(sheet) else f'"{sheet}"'
+    return f"[{rendered_book}]{rendered_sheet}!{tail}"
+
+
 def labtalk_literal(value: Any) -> str:
     """Serialize a restricted Python/native value into one LabTalk token."""
 
     if isinstance(value, (RangeRef, OutputRef)):
-        return value.value
+        return labtalk_range(value.value)
     if isinstance(value, FileRef):
         return f'"{value.value}"'
     if isinstance(value, Path):
@@ -91,4 +105,3 @@ def validate_identifier(value: str, *, kind: str = "identifier") -> str:
     if not re.fullmatch(r"[a-z][a-z0-9_]*", normalized):
         raise NativeValidationError(f"invalid {kind}: {value!r}")
     return normalized
-

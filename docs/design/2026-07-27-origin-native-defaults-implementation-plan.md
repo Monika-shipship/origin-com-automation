@@ -319,10 +319,10 @@ git commit -m "Document editable Origin-native workflow defaults"
 
 **Files:**
 - Create: `tests/smoke/test_live_native_defaults.py`
-- Create: `docs/VALIDATION-0.3.0.md`
-- Modify: `.codex-plugin/plugin.json` to version 0.3.0 plus a Codex cachebuster
-- Modify: `pyproject.toml` to version 0.3.0
-- Modify: `src/origin_com_automation/__init__.py` to version 0.3.0
+- Create: `docs/VALIDATION-0.2.1.md`
+- Modify: `.codex-plugin/plugin.json` to version 0.2.1 plus a Codex cachebuster
+- Modify: `pyproject.toml` to version 0.2.1
+- Modify: `src/origin_com_automation/__init__.py` to version 0.2.1
 
 - [ ] **Step 1: Add live smoke covering connector, formula, and fit persistence**
 

@@ -124,6 +124,19 @@ def test_operation_commands_reject_unsafe_ranges():
     assert build_recalculate_operation_command("[Book1]Fit!A1") == (
         "op_change ir:=[Book1]Fit!A1 tr:=__codex_op_tree op:=run;"
     )
+
+
+def test_operation_commands_quote_worksheet_long_names():
+    operation_range = "[Book1]native-defaults!(D,E)"
+
+    assert build_get_operation_command(operation_range) == (
+        'op_change ir:=[Book1]"native-defaults"!(D,E) '
+        "tr:=__codex_op_tree op:=get;"
+    )
+    assert build_recalculate_operation_command(operation_range) == (
+        'op_change ir:=[Book1]"native-defaults"!(D,E) '
+        "tr:=__codex_op_tree op:=run;"
+    )
     with pytest.raises(NativeValidationError, match="unsafe"):
         build_get_operation_command("[Book]1!A; del -all")
 
@@ -296,7 +309,7 @@ def test_controller_routes_verified_native_linear_fit_without_python_fallback():
     assert result.data["backend"] == "origin_native"
     assert result.data["operation_ref"].startswith("op://fitlr/")
     assert app.scripts == [
-        "fitlr -r 1 iy:=[Book1]Data!(A,B);"
+        "fitlr -r 1 iy:=[Book1]Data!(A,B) oy:=<new>;"
     ]
 
 
@@ -323,8 +336,25 @@ def test_controller_defaults_linear_fit_to_auto_native_operation(monkeypatch):
     assert result.data["native_operation_created"] is True
     assert result.data["recalculate_mode"] == "auto"
     assert result.data["operation_ref"].startswith("op://fitlr/")
-    assert app.scripts == ["fitlr -r 1 iy:=[Book1]Data!(A,B);"]
+    assert app.scripts == ["fitlr -r 1 iy:=[Book1]Data!(A,B) oy:=<new>;"]
     assert python_calls == []
+
+
+def test_controller_quotes_worksheet_long_name_for_native_analysis():
+    app = NativeApp()
+    controller = owned_controller(app)
+
+    result = controller.run_analysis(
+        worksheet_name="[Book1]native-defaults",
+        method="linear_fit",
+        x_column="A",
+        y_column="B",
+    )
+
+    assert result.success is True
+    assert app.scripts == [
+        'fitlr -r 1 iy:=[Book1]"native-defaults"!(A,B) oy:=<new>;'
+    ]
 
 
 def test_controller_rejects_unmapped_native_analysis_method_without_python_fallback(

@@ -2,6 +2,8 @@ import pytest
 
 from origin_com_automation.objects.connectors import (
     build_connector_plan,
+    connector_header_state,
+    connector_options_with_header,
     connector_type_for_source,
 )
 from origin_com_automation.objects.images import build_image_plan
@@ -20,6 +22,8 @@ def test_connector_create_normalizes_source_and_requires_supported_type(tmp_path
         keep_connector=True,
     )
     assert plan.source == source.resolve()
+    assert plan.selection is None
+    assert plan.has_header is None
     assert plan.verification == "connector_state_and_source"
 
     with pytest.raises(ObjectPlanError, match="connector_type"):
@@ -38,6 +42,59 @@ def test_connector_disconnect_requires_explicit_keep_data_policy():
         action="disconnect", worksheet_ref="[Book1]Data", keep_data=True
     )
     assert plan.keep_data is True
+
+
+def test_connector_create_preserves_selection_and_explicit_header_policy(tmp_path):
+    source = tmp_path / "data.xlsx"
+    source.write_bytes(b"fixture")
+
+    plan = build_connector_plan(
+        action="create",
+        worksheet_ref="[Book1]Data",
+        source=str(source),
+        connector_type="excel",
+        selection="Target Sheet",
+        has_header=True,
+    )
+
+    assert plan.selection == "Target Sheet"
+    assert plan.has_header is True
+    with pytest.raises(ObjectPlanError, match="only accepted for connector create"):
+        build_connector_plan(
+            action="refresh",
+            worksheet_ref="[Book1]Data",
+            has_header=True,
+        )
+
+
+def test_connector_options_apply_explicit_csv_and_excel_header_policy():
+    csv_options = (
+        '<OriginStorage><CSV/><Settings><heading>0</heading></Settings></OriginStorage>'
+    )
+    excel_options = (
+        '<OriginStorage><Excel/><Settings><mainheader>-1</mainheader>'
+        '<labels Use="0"><longname>0</longname>'
+        '</labels></Settings></OriginStorage>'
+    )
+
+    assert "<heading>1</heading>" in connector_options_with_header(
+        csv_options, connector_type="csv", has_header=True
+    )
+    without_header = connector_options_with_header(
+        excel_options, connector_type="excel", has_header=False
+    )
+    assert "<mainheader>0</mainheader>" in without_header
+    assert '<labels Use="0">' in without_header
+    assert "<longname>0</longname>" in without_header
+    assert connector_header_state(without_header, connector_type="excel") is False
+
+    with_header = connector_options_with_header(
+        excel_options, connector_type="excel", has_header=True
+    )
+    assert "<mainheader>0</mainheader>" in with_header
+    assert '<labels Use="1">' in with_header
+    assert "<longname>1</longname>" in with_header
+    assert connector_header_state(with_header, connector_type="excel") is True
 
 
 def test_connector_type_is_derived_from_supported_local_source_extensions(tmp_path):

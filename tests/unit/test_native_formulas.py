@@ -208,6 +208,18 @@ def test_formula_plan_escapes_labtalk_string_delimiters_without_changing_metadat
     assert 'C:\\\\data' in plan.command
 
 
+def test_formula_plan_quotes_a_worksheet_long_name_for_labtalk_ranges():
+    plan = build_column_formula_plan(
+        worksheet_ref="[Book1]native-defaults",
+        column="C",
+        formula="col(A)*col(B)",
+    )
+
+    assert plan.worksheet_ref == "[Book1]native-defaults"
+    assert plan.target_range == '[Book1]"native-defaults"!C'
+    assert 'col:=[Book1]"native-defaults"!C' in plan.command
+
+
 @pytest.mark.parametrize(
     ("kwargs", "message"),
     [
@@ -295,6 +307,22 @@ def test_controller_sets_formula_and_returns_representative_value_readback():
     assert result.data["value_readback"] == [10.0, 40.0, 90.0]
     assert result.data["worksheet_ref"] == "[Book1]Data"
     assert result.data["column_ref"] == "[Book1]Data!C"
+
+
+def test_controller_appends_the_next_formula_column_when_it_does_not_exist():
+    app = TransformApp()
+
+    result = owned_controller(app).set_column_formula(
+        worksheet_ref="[Book1]Data",
+        column="C",
+        formula="col(A)*col(B)",
+        recalculate_mode="auto",
+    )
+
+    assert result.success is True
+    assert app.sheet.Cols == 3
+    assert result.data["column_ref"] == "[Book1]Data!C"
+    assert result.data["value_readback"] == [10.0, 40.0, 90.0]
 
 
 def test_calculated_column_transform_defaults_to_native_formula_without_block_write():

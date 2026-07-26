@@ -58,10 +58,7 @@ def test_live_connector_matrix_image_note_and_folder_persist(tmp_path):
         )
         assert imported.success, imported.to_dict()
         connector = controller.manage_connector(
-            action="create",
-            worksheet_ref=imported.data["worksheet_ref"],
-            source=str(source),
-            connector_type="csv",
+            action="info", worksheet_ref=imported.data["worksheet_ref"]
         )
         assert connector.success, connector.to_dict()
         connector_ref = connector.data["worksheet_ref"]

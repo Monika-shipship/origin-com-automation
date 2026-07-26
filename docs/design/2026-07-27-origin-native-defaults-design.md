@@ -2,7 +2,7 @@
 
 Status: approved direction, implementation review pending
 
-Target: `origin-com-automation` 0.3 development
+Target: `origin-com-automation` 0.2.1 development
 
 Verified baseline: Windows 11 x64, Python x64, Origin 10.1.0.178
 
@@ -81,7 +81,7 @@ readback, or operation registration cannot be confirmed.
 - Existing callers that explicitly pass `backend="python"` or `source_mode="snapshot"` keep the
   previous behavior.
 - The public tool names and common result envelope remain stable.
-- A default behavior change is intentional and documented as a minor-version workflow change.
+- A default behavior change is intentional and documented in the `0.2.1` workflow update.
 - Attached SI/COMSI sessions remain read-only; all connectors, formulas, and operations require an
   owned session.
 - Existing OPJU modification does not reconnect or replace worksheets unless explicitly asked.

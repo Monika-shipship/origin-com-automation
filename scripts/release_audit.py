@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import ast
 import json
 import re
 import subprocess
@@ -106,15 +107,40 @@ def _version_errors(root: Path) -> list[dict[str, str]]:
     try:
         manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
         project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+        runtime_tree = ast.parse(
+            (root / "src/origin_com_automation/__init__.py").read_text(
+                encoding="utf-8"
+            )
+        )
         manifest_version = str(manifest["version"]).split("+", 1)[0]
         package_version = str(project["project"]["version"])
-    except (KeyError, OSError, UnicodeError, json.JSONDecodeError, tomllib.TOMLDecodeError) as exc:
+        runtime_version = next(
+            str(node.value.value)
+            for node in runtime_tree.body
+            if isinstance(node, ast.Assign)
+            and any(
+                isinstance(target, ast.Name) and target.id == "__version__"
+                for target in node.targets
+            )
+            and isinstance(node.value, ast.Constant)
+            and isinstance(node.value.value, str)
+        )
+    except (
+        KeyError,
+        OSError,
+        StopIteration,
+        SyntaxError,
+        UnicodeError,
+        json.JSONDecodeError,
+        tomllib.TOMLDecodeError,
+    ) as exc:
         return [_error("version_unreadable", f"Could not read release versions: {exc}")]
-    if manifest_version != package_version:
+    if len({manifest_version, package_version, runtime_version}) != 1:
         return [
             _error(
                 "version_mismatch",
-                f"Manifest version {manifest_version} differs from package {package_version}",
+                "Release versions differ: "
+                f"manifest={manifest_version}, package={package_version}, runtime={runtime_version}",
             )
         ]
     return []

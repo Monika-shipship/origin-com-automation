@@ -126,6 +126,7 @@ class ObjectApp:
     Version = "10.1.0.178"
 
     def __init__(self):
+        self.scripts = []
         self.sheets = {
             "[Book1]Data": Sheet([["a", 2], ["b", 1]], ["group", "x"]),
             "[Book1]Out": Sheet([], ["group", "x"]),
@@ -136,6 +137,10 @@ class ObjectApp:
             [], factory=lambda: Page("MBook1", self.matrix)
         )
         self.ImagePages = Collection([], factory=lambda: ImagePage())
+
+    def Execute(self, script):
+        self.scripts.append(script)
+        return True
 
     def FindWorksheet(self, ref):
         return self.sheets.get(ref)
@@ -186,8 +191,11 @@ def test_controller_connector_lifecycle_verifies_state(tmp_path):
         action="disconnect", worksheet_ref="[Book1]Data", keep_data=True
     )
     assert created.success and created.data["connected"] is True
+    assert created.data["auto_recalculation_flushed"] is True
     assert refreshed.success and refreshed.data["refresh_count"] == 1
+    assert refreshed.data["auto_recalculation_flushed"] is True
     assert disconnected.success and disconnected.data["connected"] is False
+    assert controller._app.scripts == ["run -p au;", "run -p au;"]
 
 
 def test_controller_uses_native_data_connector_when_wrapper_is_absent(tmp_path):
@@ -208,6 +216,11 @@ def test_controller_uses_native_data_connector_when_wrapper_is_absent(tmp_path):
             self.Parent = Book()
             self.connected = False
             self.source = ""
+            self.selection = ""
+            self.options = (
+                '<OriginStorage><CSV/><Settings><heading>0</heading>'
+                '</Settings></OriginStorage>'
+            )
             self.refreshes = 0
 
         def DoMethod(self, name, argument):
@@ -227,11 +240,19 @@ def test_controller_uses_native_data_connector_when_wrapper_is_absent(tmp_path):
             return 1 if name == "HasDC" and self.connected else 0
 
         def GetStrProp(self, name):
-            return self.source if name == "DC.Source" else ""
+            return {
+                "DC.Source": self.source,
+                "DC.Sel": self.selection,
+                "DC.Optn": self.options,
+            }.get(name, "")
 
         def SetStrProp(self, name, value):
             if name == "DC.Source":
                 self.source = value
+            elif name == "DC.Sel":
+                self.selection = value
+            elif name == "DC.Optn":
+                self.options = value
             return 1
 
     app = ObjectApp()
@@ -243,6 +264,8 @@ def test_controller_uses_native_data_connector_when_wrapper_is_absent(tmp_path):
         worksheet_ref="[Book1]Native",
         source=str(source),
         connector_type="csv",
+        selection="Data",
+        has_header=True,
     )
     refreshed = controller.manage_connector(
         action="refresh", worksheet_ref="[Book1]Native"
@@ -252,6 +275,9 @@ def test_controller_uses_native_data_connector_when_wrapper_is_absent(tmp_path):
     )
 
     assert created.success and created.data["interface"] == "labtalk_data_connector"
+    assert created.data["selection"] == "Data"
+    assert created.data["has_header"] is True
+    assert "<heading>1</heading>" in app.sheets["[Book1]Native"].options
     assert refreshed.success and refreshed.data["refresh_count"] == 2
     assert disconnected.success and disconnected.data["connected"] is False
 

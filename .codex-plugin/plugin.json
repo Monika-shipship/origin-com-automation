@@ -1,6 +1,6 @@
 {
   "name": "origin-com-automation",
-  "version": "0.2.0+codex.20260726161056",
+  "version": "0.2.1+codex.20260726181655",
   "description": "Safe serialized Origin COM automation for data analysis, plotting, and export.",
   "author": {
     "name": "Dawn"

@@ -66,7 +66,10 @@ def test_live_native_fit_operation_recalculates(tmp_path):
         assert before_fit.success, before_fit.to_dict()
         before_values = before_fit.data["values"]
 
-        changed = controller.write_worksheet(worksheet_ref, [[13.0]], row=3, column=1)
+        source.write_text("x,y\n0,1\n1,3\n2,5\n3,13\n", encoding="ascii")
+        changed = controller.manage_connector(
+            action="refresh", worksheet_ref=worksheet_ref
+        )
         assert changed.success, changed.to_dict()
         recalculated = controller.recalculate_analysis(
             operation_ref=created.data["operation_ref"], wait=True

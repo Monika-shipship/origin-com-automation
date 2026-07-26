@@ -82,3 +82,14 @@ def test_release_audit_detects_manifest_package_version_drift(tmp_path: Path):
     report = audit_repository(root)
 
     assert any(item["code"] == "version_mismatch" for item in report["errors"])
+
+
+def test_release_audit_detects_runtime_package_version_drift(tmp_path: Path):
+    root = _repository(tmp_path)
+    runtime = root / "src" / "origin_com_automation" / "__init__.py"
+    runtime.write_text("__version__ = '0.2.1'\n", encoding="utf-8")
+    _run(root, "add", str(runtime.relative_to(root)))
+
+    report = audit_repository(root)
+
+    assert any(item["code"] == "version_mismatch" for item in report["errors"])

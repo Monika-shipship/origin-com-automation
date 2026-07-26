@@ -347,6 +347,8 @@ def test_project_copy_and_worksheet_io_use_the_owned_app(tmp_path):
     assert opened.data["completed_stages"] == ["copy", "load", "activate", "validate"]
     assert app.loads == [(str(working.resolve()), False)]
     assert written.success is True
+    assert written.data["auto_recalculation_flushed"] is True
+    assert "run -p au;" in app.execute_scripts
     assert app.finds[0] == "Book1"
     assert app.sets[0][0] == [[1, 2], [3, 4]]
     assert read.data["values"] == [[1, 2], [3, 4]]

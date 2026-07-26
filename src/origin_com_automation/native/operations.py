@@ -8,7 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Any, Mapping
 
-from .common import NativeValidationError, RangeRef
+from .common import NativeValidationError, RangeRef, labtalk_range
 from .xfunctions import XFunctionPlan
 
 
@@ -190,12 +190,12 @@ def execute_xfunction_plan(
 
 def build_get_operation_command(operation_range: str) -> str:
     safe_range = RangeRef(operation_range).value
-    return f"op_change ir:={safe_range} tr:=__codex_op_tree op:=get;"
+    return f"op_change ir:={labtalk_range(safe_range)} tr:=__codex_op_tree op:=get;"
 
 
 def build_recalculate_operation_command(operation_range: str) -> str:
     safe_range = RangeRef(operation_range).value
-    return f"op_change ir:={safe_range} tr:=__codex_op_tree op:=run;"
+    return f"op_change ir:={labtalk_range(safe_range)} tr:=__codex_op_tree op:=run;"
 
 
 def read_analysis_operation(

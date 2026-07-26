@@ -178,6 +178,8 @@ def test_server_registers_the_complete_origin_tool_surface():
     assert "row_start" in schemas["origin_set_column_formula"]
     assert "row_end" in schemas["origin_set_column_formula"]
     assert "recalculate_mode" in schemas["origin_set_column_formula"]
+    assert "selection" in schemas["origin_manage_connector"]
+    assert "has_header" in schemas["origin_manage_connector"]
     analysis_schema = json.loads(schemas["origin_run_analysis"])["properties"]["options"]["anyOf"][0]
     assert analysis_schema["additionalProperties"] is False
     for option_name in [

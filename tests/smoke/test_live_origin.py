@@ -57,6 +57,7 @@ def test_owned_origin_end_to_end(tmp_path):
             worksheet_name="WSe2Mixed",
             sheet_name="p-WSe2-only",
             has_header=True,
+            source_mode="snapshot",
         )
         assert mixed_import.success, mixed_import.to_dict()
         assert mixed_import.data["rows"] == 26
@@ -90,7 +91,11 @@ def test_owned_origin_end_to_end(tmp_path):
 
         data_path = tmp_path / "smoke.csv"
         data_path.write_text("x,y,y2\n0,0,0\n1,1,1\n2,4,8\n3,9,27\n", encoding="ascii")
-        imported = controller.import_data(file_path=str(data_path), worksheet_name="SmokeData")
+        imported = controller.import_data(
+            file_path=str(data_path),
+            worksheet_name="SmokeData",
+            source_mode="snapshot",
+        )
         assert imported.success, imported.to_dict()
 
         read_back = controller.read_worksheet("SmokeData", r1=0, c1=0, r2=3, c2=2)
@@ -103,7 +108,12 @@ def test_owned_origin_end_to_end(tmp_path):
             method="polynomial_fit",
             x_column="A",
             y_column="B",
-            options={"degree": 2},
+            options={
+                "backend": "python",
+                "degree": 2,
+                "create_operation": False,
+                "recalculate_mode": "none",
+            },
             row_start=0,
             row_end=3,
             filters=[{"column": "x", "operator": "ge", "value": 0}],

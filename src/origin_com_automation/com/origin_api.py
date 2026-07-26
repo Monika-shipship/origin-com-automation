@@ -25,7 +25,7 @@ from uuid import uuid4
 
 from ..contracts import Artifact, ResultEnvelope
 from ..config import PluginConfig
-from ..native.common import NativeValidationError, RangeRef
+from ..native.common import NativeValidationError, OutputRef, RangeRef
 from ..native.formulas import (
     build_column_formula_plan,
     column_letters,
@@ -40,7 +40,12 @@ from ..native.operations import (
     recalculate_operation,
 )
 from ..native.xfunctions import build_xfunction_plan, verified_native_analysis_methods
-from ..objects.connectors import build_connector_plan, connector_type_for_source
+from ..objects.connectors import (
+    build_connector_plan,
+    connector_header_state,
+    connector_options_with_header,
+    connector_type_for_source,
+)
 from ..objects.images import build_image_plan
 from ..objects.matrices import build_matrix_plan
 from ..objects.validation import ObjectPlanError
@@ -240,6 +245,16 @@ def _safe_call(obj: Any, name: str, *args: Any, default: Any = None) -> Any:
         return method(*args)
     except Exception:
         return default
+
+
+def _flush_auto_recalculation(app: Any) -> bool | None:
+    """Run Origin's pending auto-update queue after an input mutation."""
+
+    execute = getattr(app, "Execute", None)
+    if not callable(execute):
+        return None
+    result = execute("run -p au;")
+    return not (result is False or result == 0)
 
 
 def _collection_items(collection: Any) -> list[Any]:
@@ -787,6 +802,30 @@ def _column_index(sheet: Any, column: str | int) -> int:
             return _checked_column_index(sheet, index - 1, column)
         raise LookupError(f"Origin worksheet column not found: {column}")
     return _checked_column_index(sheet, found_index, column)
+
+
+def _next_formula_column_index(sheet: Any, column: str | int) -> int:
+    count = _safe_attr(sheet, "Cols")
+    if count is None:
+        raise LookupError(f"Origin worksheet column is out of range: {column}")
+    if isinstance(column, bool):
+        raise LookupError(f"Origin worksheet column is out of range: {column}")
+    if isinstance(column, int):
+        index = column
+    else:
+        text = str(column).strip()
+        if text.isdigit():
+            index = int(text)
+        elif re.fullmatch(r"[A-Za-z]{1,3}", text):
+            index = 0
+            for char in text.upper():
+                index = index * 26 + ord(char) - ord("A") + 1
+            index -= 1
+        else:
+            raise LookupError(f"Origin worksheet column not found: {column}")
+    if index != int(count):
+        raise LookupError(f"Origin worksheet column is out of range: {column}")
+    return index
 
 
 def _worksheet_column(sheet: Any, column: str | int) -> Any:
@@ -2828,7 +2867,12 @@ class OriginController:
             app = self._require_app()
             sheet = _resolve_worksheet(app, worksheet_ref)
             try:
-                resolved_index = _column_index(sheet, column)
+                append_column = False
+                try:
+                    resolved_index = _column_index(sheet, column)
+                except LookupError:
+                    resolved_index = _next_formula_column_index(sheet, column)
+                    append_column = True
                 plan = build_column_formula_plan(
                     worksheet_ref=_worksheet_reference(worksheet_ref),
                     column=resolved_index,
@@ -2838,6 +2882,8 @@ class OriginController:
                     row_end=row_end,
                     recalculate_mode=recalculate_mode,
                 )
+                if append_column:
+                    sheet.Cols = resolved_index + 1
                 resolved_column = _worksheet_column(sheet, resolved_index)
                 data = execute_column_formula_plan(app, resolved_column, plan)
                 values = _read_column_values(
@@ -3072,6 +3118,8 @@ class OriginController:
         connector_type: str | None = None,
         keep_connector: bool = True,
         keep_data: bool | None = None,
+        selection: str | None = None,
+        has_header: bool | None = None,
     ) -> ResultEnvelope:
         if action != "info":
             guard = self._guard_mutation()
@@ -3085,6 +3133,8 @@ class OriginController:
                 connector_type=connector_type,
                 keep_connector=keep_connector,
                 keep_data=keep_data,
+                selection=selection,
+                has_header=has_header,
             )
         except ObjectPlanError as exc:
             return ResultEnvelope.fail(exc.code, str(exc))
@@ -3118,6 +3168,30 @@ class OriginController:
                             "Origin rejected Data Connector creation",
                         )
                     sheet.SetStrProp("DC.Source", str(plan.source))
+                    if plan.selection is not None:
+                        selection_result = sheet.SetStrProp("DC.Sel", plan.selection)
+                        if selection_result is False or selection_result == 0:
+                            return ResultEnvelope.fail(
+                                "CONNECTOR_OPTIONS_UNCONFIRMED",
+                                "Origin rejected the requested connector selection",
+                            )
+                    if plan.has_header is not None:
+                        try:
+                            options = connector_options_with_header(
+                                str(sheet.GetStrProp("DC.Optn") or ""),
+                                connector_type=str(plan.connector_type),
+                                has_header=plan.has_header,
+                            )
+                        except ObjectPlanError as exc:
+                            return ResultEnvelope.fail(
+                                "CONNECTOR_OPTIONS_UNAVAILABLE", str(exc)
+                            )
+                        options_result = sheet.SetStrProp("DC.Optn", options)
+                        if options_result is False or options_result == 0:
+                            return ResultEnvelope.fail(
+                                "CONNECTOR_OPTIONS_UNCONFIRMED",
+                                "Origin rejected the requested connector header policy",
+                            )
                     previous_sparklines = _safe_call(
                         app, "LTVar", "@IMPS", default=None
                     )
@@ -3167,6 +3241,8 @@ class OriginController:
                         )
                     connected = bool(sheet.GetNumProp("HasDC"))
                 actual_source = str(sheet.GetStrProp("DC.Source") or "")
+                actual_selection = str(sheet.GetStrProp("DC.Sel") or "")
+                actual_options = str(sheet.GetStrProp("DC.Optn") or "")
                 if (
                     plan.action == "create"
                     and Path(actual_source).resolve() != plan.source
@@ -3181,6 +3257,27 @@ class OriginController:
                         "CONNECTOR_CREATE_UNCONFIRMED",
                         "Worksheet did not report an active Data Connector",
                     )
+                if plan.action == "create" and plan.selection is not None and actual_selection != plan.selection:
+                    return ResultEnvelope.fail(
+                        "CONNECTOR_OPTIONS_UNCONFIRMED",
+                        "Data Connector selection readback did not match",
+                        data={"expected": plan.selection, "actual": actual_selection},
+                    )
+                actual_has_header = None
+                if plan.action == "create" and plan.has_header is not None:
+                    try:
+                        actual_has_header = connector_header_state(
+                            actual_options, connector_type=str(plan.connector_type)
+                        )
+                    except ObjectPlanError as exc:
+                        return ResultEnvelope.fail(
+                            "CONNECTOR_OPTIONS_UNCONFIRMED", str(exc)
+                        )
+                    if actual_has_header is not plan.has_header:
+                        return ResultEnvelope.fail(
+                            "CONNECTOR_OPTIONS_UNCONFIRMED",
+                            "Data Connector header policy readback did not match",
+                        )
                 if plan.action == "disconnect" and connected:
                     return ResultEnvelope.fail(
                         "CONNECTOR_DISCONNECT_UNCONFIRMED",
@@ -3197,6 +3294,19 @@ class OriginController:
                 connector_type_value = str(
                     _safe_call(parent, "GetStrProp", "DC.Type", default="") or ""
                 )
+                auto_recalculation_flushed = None
+                if plan.action in {"create", "refresh"}:
+                    auto_recalculation_flushed = _flush_auto_recalculation(app)
+                    if auto_recalculation_flushed is False:
+                        return ResultEnvelope.fail(
+                            "AUTO_RECALCULATION_UNCONFIRMED",
+                            "Origin imported the connector data but rejected pending auto recalculation",
+                            data={
+                                "action": plan.action,
+                                "worksheet_ref": actual_worksheet_ref,
+                                "connected": connected,
+                            },
+                        )
                 return ResultEnvelope.ok(
                     {
                         "action": plan.action,
@@ -3207,7 +3317,10 @@ class OriginController:
                         "connected": connected,
                         "refresh_count": int(_safe_attr(sheet, "refreshes", 0) or 0),
                         "keep_data": plan.keep_data,
+                        "selection": actual_selection or None,
+                        "has_header": actual_has_header,
                         "interface": "labtalk_data_connector",
+                        "auto_recalculation_flushed": auto_recalculation_flushed,
                     }
                 )
             if plan.action == "create":
@@ -3242,6 +3355,19 @@ class OriginController:
                     "CONNECTOR_DISCONNECT_UNCONFIRMED",
                     "Connector remained connected after disconnect",
                 )
+            auto_recalculation_flushed = None
+            if plan.action in {"create", "refresh"}:
+                auto_recalculation_flushed = _flush_auto_recalculation(app)
+                if auto_recalculation_flushed is False:
+                    return ResultEnvelope.fail(
+                        "AUTO_RECALCULATION_UNCONFIRMED",
+                        "Origin refreshed the connector but rejected pending auto recalculation",
+                        data={
+                            "action": plan.action,
+                            "worksheet_ref": plan.worksheet_ref,
+                            "connected": connected,
+                        },
+                    )
             return ResultEnvelope.ok(
                 {
                     "action": plan.action,
@@ -3253,6 +3379,7 @@ class OriginController:
                     "connected": connected,
                     "refresh_count": int(_safe_attr(connector, "refreshes", 0) or 0),
                     "keep_data": plan.keep_data,
+                    "auto_recalculation_flushed": auto_recalculation_flushed,
                 }
             )
 
@@ -3865,6 +3992,13 @@ class OriginController:
                     "Origin explicitly rejected Worksheet.SetData",
                     data=base_data,
                 )
+            auto_recalculation_flushed = _flush_auto_recalculation(app)
+            if auto_recalculation_flushed is False:
+                return ResultEnvelope.fail(
+                    "AUTO_RECALCULATION_UNCONFIRMED",
+                    "Origin accepted the worksheet write but rejected pending auto recalculation",
+                    data={**base_data, "stage": "recalculate"},
+                )
             readback = _readback_matrix(
                 sheet,
                 row=row,
@@ -3885,6 +4019,7 @@ class OriginController:
                     )
                 ),
                 "mismatches": mismatches,
+                "auto_recalculation_flushed": auto_recalculation_flushed,
             }
             if mismatches:
                 return ResultEnvelope.fail(
@@ -3983,6 +4118,7 @@ class OriginController:
                 f"Data source could not be read: {source}",
             )
         try:
+            selected_sheet = None
             if source.suffix.lower() in {".xlsx", ".xlsm"}:
                 from openpyxl import load_workbook
 
@@ -4089,6 +4225,8 @@ class OriginController:
                 source=str(source),
                 connector_type=connector_type,
                 keep_connector=True,
+                selection=selected_sheet,
+                has_header=has_header,
             )
             if not connector_result.success:
                 return ResultEnvelope.fail(
@@ -4216,7 +4354,10 @@ class OriginController:
                             "connector_type",
                             "connected",
                             "refresh_count",
+                            "selection",
+                            "has_header",
                             "interface",
+                            "auto_recalculation_flushed",
                         )
                     },
                     "column_profiles": profiles,
@@ -4796,6 +4937,7 @@ class OriginController:
                                 f"{worksheet_ref}!({x_column},{y_column})"
                             )
                         },
+                        outputs={"oy": OutputRef("<new>")},
                         create_operation=create_operation,
                         recalculate_mode=recalculate_mode,
                     )

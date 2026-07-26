@@ -227,6 +227,10 @@ def test_default_import_uses_data_connector_without_static_block_write(tmp_path)
             super().__init__()
             self.connected = False
             self.source = ""
+            self.options = (
+                '<OriginStorage><CSV/><Settings><heading>0</heading>'
+                '</Settings></OriginStorage>'
+            )
             self.static_set_calls = 0
             self.refreshes = 0
 
@@ -259,11 +263,16 @@ def test_default_import_uses_data_connector_without_static_block_write(tmp_path)
             return int(name == "HasDC" and self.connected)
 
         def GetStrProp(self, name):
-            return self.source if name == "DC.Source" else ""
+            return {
+                "DC.Source": self.source,
+                "DC.Optn": self.options,
+            }.get(name, "")
 
         def SetStrProp(self, name, value):
             if name == "DC.Source":
                 self.source = value
+            elif name == "DC.Optn":
+                self.options = value
             return 1
 
     class LinkedApp(DataApp):
@@ -293,6 +302,9 @@ def test_default_import_uses_data_connector_without_static_block_write(tmp_path)
     assert result.data["worksheet_ref"] == "[LinkedData]Sheet1"
     assert result.data["connector"]["connected"] is True
     assert result.data["connector"]["source"] == str(source.resolve())
+    assert result.data["connector"]["selection"] is None
+    assert result.data["connector"]["has_header"] is True
+    assert "<heading>1</heading>" in app.sheet.options
     assert result.data["source_sha256"] == sha256(source.read_bytes()).hexdigest()
     assert result.data["rows"] == 2
     assert result.data["columns"] == 2
