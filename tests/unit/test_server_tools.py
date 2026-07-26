@@ -64,6 +64,22 @@ class FakeController:
         self.calls.append(("manage_analysis_template", kwargs))
         return ResultEnvelope.ok(kwargs)
 
+    def transform_worksheet(self, **kwargs):
+        self.calls.append(("transform_worksheet", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def manage_connector(self, **kwargs):
+        self.calls.append(("manage_connector", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def manage_matrix(self, **kwargs):
+        self.calls.append(("manage_matrix", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
+    def manage_image(self, **kwargs):
+        self.calls.append(("manage_image", kwargs))
+        return ResultEnvelope.ok(kwargs)
+
 
 def test_server_registers_the_complete_origin_tool_surface():
     server = create_server(controller=FakeController())
@@ -89,6 +105,10 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_get_analysis_operation",
         "origin_recalculate_analysis",
         "origin_manage_analysis_template",
+        "origin_transform_worksheet",
+        "origin_manage_connector",
+        "origin_manage_matrix",
+        "origin_manage_image",
         "origin_execute_labtalk",
         "origin_create_plot",
         "origin_configure_graph",

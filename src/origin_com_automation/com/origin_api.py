@@ -33,6 +33,11 @@ from ..native.operations import (
     recalculate_operation,
 )
 from ..native.xfunctions import build_xfunction_plan
+from ..objects.connectors import build_connector_plan
+from ..objects.images import build_image_plan
+from ..objects.matrices import build_matrix_plan
+from ..objects.validation import ObjectPlanError
+from ..objects.worksheets import TransformValidationError, transform_table
 from ..services.analysis import build_analysis_request, run_analysis_data
 from ..services.exports import (
     export_suffixes,
@@ -2689,6 +2694,328 @@ class OriginController:
             }
 
         return self._submit(describe, retryable=True)
+
+    @_serialized_operation
+    def transform_worksheet(
+        self,
+        *,
+        source_ref: str,
+        destination_ref: str,
+        action: str,
+        options: Mapping[str, Any] | None = None,
+    ) -> ResultEnvelope:
+        guard = self._guard_mutation()
+        if guard:
+            return guard
+        if source_ref == destination_ref:
+            return ResultEnvelope.fail(
+                "IN_PLACE_TRANSFORM_BLOCKED",
+                "Worksheet transforms require a distinct destination_ref",
+            )
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            source = _resolve_worksheet(app, source_ref)
+            destination = _resolve_worksheet(app, destination_ref)
+            source_rows = table_from_com_value(
+                source.GetData(0, 0, -1, -1, ORIGIN_ARRAY2D_VARIANT)
+            )
+            column_items = _collection_items(_safe_attr(source, "Columns"))
+            columns = [
+                str(_safe_attr(item, "LongName", "") or _safe_attr(item, "Name", ""))
+                for item in column_items
+            ]
+            try:
+                transformed = transform_table(
+                    source_rows,
+                    columns,
+                    action=action,
+                    options=dict(options or {}),
+                )
+            except TransformValidationError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+            destination.Cols = len(transformed.columns)
+            set_result = destination.SetData(transformed.rows, 0, 0)
+            if set_result is False or set_result == 0:
+                return ResultEnvelope.fail(
+                    "WORKSHEET_TRANSFORM_WRITE_REJECTED",
+                    "Origin rejected the transformed worksheet block",
+                )
+            destination_columns = _collection_items(_safe_attr(destination, "Columns"))
+            for index, label in enumerate(transformed.columns):
+                if index < len(destination_columns):
+                    try:
+                        destination_columns[index].LongName = label
+                    except Exception:
+                        pass
+            readback = _readback_matrix(
+                destination,
+                row=0,
+                column=0,
+                rows=len(transformed.rows),
+                columns=len(transformed.columns),
+            )
+            mismatches = _matrix_mismatches(transformed.rows, readback)
+            data = {
+                "action": transformed.action,
+                "source_ref": source_ref,
+                "destination_ref": destination_ref,
+                "input_rows": transformed.input_rows,
+                "output_rows": transformed.output_rows,
+                "columns": transformed.columns,
+                "readback_verified": not mismatches,
+                "mismatches": mismatches,
+            }
+            if mismatches:
+                return ResultEnvelope.fail(
+                    "WORKSHEET_TRANSFORM_UNCONFIRMED",
+                    "Transformed worksheet readback did not match",
+                    data=data,
+                )
+            return ResultEnvelope.ok(data)
+
+        return self._submit(execute, stage=f"transform_worksheet_{action}")
+
+    @_serialized_operation
+    def manage_connector(
+        self,
+        *,
+        action: str,
+        worksheet_ref: str,
+        source: str | None = None,
+        connector_type: str | None = None,
+        keep_connector: bool = True,
+        keep_data: bool | None = None,
+    ) -> ResultEnvelope:
+        if action != "info":
+            guard = self._guard_mutation()
+            if guard:
+                return guard
+        try:
+            plan = build_connector_plan(
+                action=action,
+                worksheet_ref=worksheet_ref,
+                source=source,
+                connector_type=connector_type,
+                keep_connector=keep_connector,
+                keep_data=keep_data,
+            )
+        except ObjectPlanError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+
+        def execute() -> ResultEnvelope:
+            sheet = _resolve_worksheet(self._require_app(), plan.worksheet_ref)
+            connector = _safe_attr(sheet, "Connector")
+            if connector is None:
+                return ResultEnvelope.fail(
+                    "CONNECTOR_INTERFACE_UNAVAILABLE",
+                    "This Origin worksheet does not expose a COM Connector interface",
+                )
+            if plan.action == "create":
+                result = connector.Connect(
+                    str(plan.source), plan.connector_type, plan.keep_connector
+                )
+            elif plan.action == "refresh":
+                result = connector.Refresh()
+            elif plan.action == "disconnect":
+                result = connector.Disconnect(bool(plan.keep_data))
+            else:
+                result = True
+            if result is False or result == 0:
+                return ResultEnvelope.fail(
+                    "CONNECTOR_ACTION_REJECTED",
+                    f"Origin rejected connector {plan.action}",
+                )
+            connected = bool(
+                _safe_attr(connector, "Connected", _safe_attr(connector, "connected", False))
+            )
+            actual_source = str(
+                _safe_attr(connector, "Source", _safe_attr(connector, "source", ""))
+            )
+            if plan.action == "create" and Path(actual_source).resolve() != plan.source:
+                return ResultEnvelope.fail(
+                    "CONNECTOR_CREATE_UNCONFIRMED",
+                    "Connector source readback did not match",
+                    data={"source": actual_source, "connected": connected},
+                )
+            if plan.action == "disconnect" and connected:
+                return ResultEnvelope.fail(
+                    "CONNECTOR_DISCONNECT_UNCONFIRMED",
+                    "Connector remained connected after disconnect",
+                )
+            return ResultEnvelope.ok(
+                {
+                    "action": plan.action,
+                    "worksheet_ref": plan.worksheet_ref,
+                    "source": actual_source or None,
+                    "connector_type": str(
+                        _safe_attr(connector, "Type", _safe_attr(connector, "type", ""))
+                    ) or None,
+                    "connected": connected,
+                    "refresh_count": int(_safe_attr(connector, "refreshes", 0) or 0),
+                    "keep_data": plan.keep_data,
+                }
+            )
+
+        return self._submit(
+            execute,
+            retryable=plan.action == "info",
+            stage=f"connector_{plan.action}",
+        )
+
+    @_serialized_operation
+    def manage_matrix(
+        self,
+        *,
+        action: str,
+        matrix_ref: str,
+        values: list[list[Any]] | None = None,
+        row: int = 0,
+        column: int = 0,
+        operation: str | None = None,
+    ) -> ResultEnvelope:
+        if action != "read":
+            guard = self._guard_mutation()
+            if guard:
+                return guard
+        try:
+            plan = build_matrix_plan(
+                action=action,
+                matrix_ref=matrix_ref,
+                values=values,
+                row=row,
+                column=column,
+                operation=operation,
+            )
+        except ObjectPlanError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            matrix = _safe_call(app, "FindMatrixSheet", plan.matrix_ref, default=None)
+            if matrix is None:
+                return ResultEnvelope.fail(
+                    "MATRIX_NOT_FOUND", f"Matrix sheet not found: {plan.matrix_ref}"
+                )
+            if plan.action == "write":
+                block = [list(item) for item in plan.values or ()]
+                result = matrix.SetData(block, plan.row, plan.column)
+                if result is False or result == 0:
+                    return ResultEnvelope.fail("MATRIX_WRITE_REJECTED", "Origin rejected Matrix.SetData")
+                raw = matrix.GetData()
+                readback = table_from_com_value(raw)
+                mismatches = _matrix_mismatches(block, readback)
+                if mismatches:
+                    return ResultEnvelope.fail(
+                        "MATRIX_WRITE_UNCONFIRMED",
+                        "Matrix readback did not match",
+                        data={"mismatches": mismatches},
+                    )
+                return ResultEnvelope.ok(
+                    {
+                        "action": "write",
+                        "matrix_ref": plan.matrix_ref,
+                        "shape": list(plan.shape or (0, 0)),
+                        "expected_range": list(plan.expected_range or ()),
+                        "readback_verified": True,
+                    }
+                )
+            if plan.action == "read":
+                data = table_from_com_value(matrix.GetData())
+                return ResultEnvelope.ok(
+                    {
+                        "action": "read",
+                        "matrix_ref": plan.matrix_ref,
+                        "values": data,
+                        "shape": [len(data), len(data[0]) if data else 0],
+                    }
+                )
+            if plan.action == "transform":
+                result = matrix.Execute(plan.command)
+                if result is False or result == 0:
+                    return ResultEnvelope.fail("MATRIX_TRANSFORM_REJECTED", "Origin rejected matrix transform")
+                return ResultEnvelope.ok(
+                    {
+                        "action": "transform",
+                        "matrix_ref": plan.matrix_ref,
+                        "operation": plan.operation,
+                        "supported_unverified": True,
+                    }
+                )
+            return ResultEnvelope.fail(
+                "MATRIX_CREATE_UNVERIFIED",
+                "Matrix creation is not enabled until the installed COM interface is verified",
+            )
+
+        return self._submit(
+            execute, retryable=plan.action == "read", stage=f"matrix_{plan.action}"
+        )
+
+    @_serialized_operation
+    def manage_image(
+        self,
+        *,
+        action: str,
+        image_ref: str,
+        path: str | None = None,
+        overwrite: bool = False,
+    ) -> ResultEnvelope:
+        if action != "info":
+            guard = self._guard_mutation()
+            if guard:
+                return guard
+        try:
+            plan = build_image_plan(
+                action=action,
+                image_ref=image_ref,
+                path=path,
+                overwrite=overwrite,
+            )
+        except ObjectPlanError as exc:
+            return ResultEnvelope.fail(exc.code, str(exc))
+
+        def execute() -> ResultEnvelope:
+            app = self._require_app()
+            page = _safe_call(app, "FindImagePage", plan.image_ref, default=None)
+            if page is None:
+                return ResultEnvelope.fail("IMAGE_PAGE_NOT_FOUND", f"Image Page not found: {plan.image_ref}")
+            artifacts: list[Artifact] = []
+            if plan.action == "import":
+                result = page.Import(str(plan.path))
+            elif plan.action == "export":
+                result = page.Export(str(plan.path))
+            elif plan.action == "delete":
+                delete = getattr(page, "Delete", None)
+                if not callable(delete):
+                    return ResultEnvelope.fail("IMAGE_DELETE_UNAVAILABLE", "Image Page does not expose Delete")
+                result = delete()
+            else:
+                result = True
+            if result is False or result == 0:
+                return ResultEnvelope.fail("IMAGE_ACTION_REJECTED", f"Origin rejected image {plan.action}")
+            if plan.action == "export":
+                if not plan.path or not plan.path.is_file() or plan.path.stat().st_size == 0:
+                    return ResultEnvelope.fail("IMAGE_EXPORT_UNCONFIRMED", "Image export artifact is missing or empty")
+                artifacts.append(Artifact(str(plan.path), "origin_image"))
+            source_value = str(_safe_attr(page, "Source", "")) or None
+            if plan.action == "import" and Path(source_value or "").resolve() != plan.path:
+                return ResultEnvelope.fail("IMAGE_IMPORT_UNCONFIRMED", "Image source readback did not match")
+            return ResultEnvelope.ok(
+                {
+                    "action": plan.action,
+                    "image_ref": plan.image_ref,
+                    "source": source_value,
+                    "width": _safe_attr(page, "Width"),
+                    "height": _safe_attr(page, "Height"),
+                    "path": str(plan.path) if plan.path else None,
+                    "artifact_verified": plan.action != "export" or bool(artifacts),
+                },
+                artifacts=artifacts,
+            )
+
+        return self._submit(
+            execute, retryable=plan.action == "info", stage=f"image_{plan.action}"
+        )
 
     @_serialized_operation
     def write_worksheet(

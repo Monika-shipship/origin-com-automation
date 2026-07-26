@@ -195,6 +195,43 @@ class GraphConfigurationOptions(StrictOptions):
     categorical_style: CategoricalStyleOptions | None = None
 
 
+class WorksheetTransformOptions(StrictOptions):
+    by: list[str] | None = None
+    ascending: bool | list[bool] | None = None
+    na_position: Literal["first", "last"] | None = None
+    column: str | None = None
+    operator: Literal[
+        "eq", "ne", "gt", "ge", "lt", "le",
+        "add", "subtract", "multiply", "divide", "power",
+    ] | None = None
+    value: Any | None = None
+    subset: list[str] | None = None
+    keep: Literal["first", "last", False] | None = None
+    columns: str | list[str] | None = None
+    strategy: Literal["value", "forward", "backward", "mean", "median", "drop_rows"] | None = None
+    right_rows: list[list[Any]] | None = None
+    right_columns: list[str] | None = None
+    on: list[str] | None = None
+    how: Literal["left", "right", "inner", "outer"] | None = None
+    validation: Literal["one_to_one", "one_to_many", "many_to_one", "many_to_many"] | None = Field(
+        default=None, alias="validate"
+    )
+    other_rows: list[list[Any]] | None = None
+    other_columns: list[str] | None = None
+    axis: Literal[0, 1] | None = None
+    ignore_index: bool | None = None
+    index: list[str] | None = None
+    values: str | None = None
+    aggregation: Literal["mean", "sum", "min", "max", "count", "median"] | None = None
+    id_vars: list[str] | None = None
+    value_vars: list[str] | None = None
+    variable_name: str | None = None
+    value_name: str | None = None
+    name: str | None = None
+    left: str | None = None
+    right: str | None = None
+
+
 def _inline_local_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
     definitions = schema.get("$defs", {})
 
@@ -246,6 +283,7 @@ def create_server(
                 "origin_configure_graph",
                 "origin_run_analysis",
                 "origin_run_xfunction",
+                "origin_transform_worksheet",
             }:
                 tool.parameters = _inline_local_schema_refs(tool.parameters)
             registered_tools.append(tool)
@@ -364,6 +402,88 @@ def create_server(
             sheet_name=sheet_name,
             has_header=has_header,
             target_mode=target_mode,
+        )
+
+    @strict_tool(name="origin_transform_worksheet")
+    def origin_transform_worksheet(
+        source_ref: str,
+        destination_ref: str,
+        action: Literal[
+            "sort",
+            "filter",
+            "deduplicate",
+            "fill_missing",
+            "transpose",
+            "merge",
+            "concat",
+            "pivot",
+            "melt",
+            "calculated_column",
+        ],
+        options: WorksheetTransformOptions | None = None,
+    ) -> ResultEnvelope:
+        """Transform one worksheet into a distinct destination and verify exact readback."""
+        return active_controller().transform_worksheet(
+            source_ref=source_ref,
+            destination_ref=destination_ref,
+            action=action,
+            options=options.model_dump(exclude_none=True, by_alias=True) if options else None,
+        )
+
+    @strict_tool(name="origin_manage_connector")
+    def origin_manage_connector(
+        action: Literal["create", "info", "refresh", "disconnect"],
+        worksheet_ref: str,
+        source: str | None = None,
+        connector_type: Literal["csv", "excel"] | None = None,
+        keep_connector: bool = True,
+        keep_data: bool | None = None,
+    ) -> ResultEnvelope:
+        """Create, inspect, refresh, or explicitly disconnect a CSV/Excel Data Connector."""
+        return active_controller().manage_connector(
+            action=action,
+            worksheet_ref=worksheet_ref,
+            source=source,
+            connector_type=connector_type,
+            keep_connector=keep_connector,
+            keep_data=keep_data,
+        )
+
+    @strict_tool(name="origin_manage_matrix")
+    def origin_manage_matrix(
+        action: Literal["create", "read", "write", "transform"],
+        matrix_ref: str,
+        values: list[list[float | None]] | None = None,
+        row: Annotated[int, Field(ge=0)] = 0,
+        column: Annotated[int, Field(ge=0)] = 0,
+        operation: Literal[
+            "transpose", "rotate_90", "flip_horizontal", "flip_vertical"
+        ]
+        | None = None,
+    ) -> ResultEnvelope:
+        """Read/write Matrix data or apply a closed transform operation."""
+        return active_controller().manage_matrix(
+            action=action,
+            matrix_ref=matrix_ref,
+            values=values,
+            row=row,
+            column=column,
+            operation=operation,
+        )
+
+    @strict_tool(name="origin_manage_image")
+    def origin_manage_image(
+        action: Literal["info", "import", "export", "delete"],
+        image_ref: str,
+        path: str | None = None,
+        overwrite: bool = False,
+    ) -> ResultEnvelope:
+        """Inspect, import, export, or delete one stable Image Page ref."""
+        return active_controller().manage_image(
+            action=action,
+            image_ref=image_ref,
+            path=path,
+            overwrite=overwrite,
         )
 
     @strict_tool(name="origin_read_worksheet")
