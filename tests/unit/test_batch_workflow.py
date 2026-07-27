@@ -41,3 +41,24 @@ def test_batch_execution_is_serial_and_honors_stop_policy(tmp_path):
     assert calls == ["a.csv", "b.csv"]
     assert result["completed"] == 2
     assert result["stopped_early"] is True
+
+
+def test_batch_defaults_to_fail_fast_and_does_not_prepare_unstarted_item(tmp_path):
+    files = []
+    for name in ["a.csv", "b.csv", "c.csv"]:
+        path = tmp_path / name
+        path.write_text("x,y\n1,2\n", encoding="utf-8")
+        files.append(str(path))
+    plan = build_batch_plan(files=files, output_root=str(tmp_path / "out"))
+
+    result = execute_batch(
+        plan,
+        lambda item: {"success": item.index == 1, "stage": "analysis"},
+    )
+
+    assert result["completed"] == 2
+    assert result["stopped_early"] is True
+    assert result["failed_item"]["index"] == 2
+    assert Path(plan.items[0].output_dir).is_dir()
+    assert Path(plan.items[1].output_dir).is_dir()
+    assert not Path(plan.items[2].output_dir).exists()

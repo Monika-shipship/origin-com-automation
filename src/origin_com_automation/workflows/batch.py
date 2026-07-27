@@ -73,23 +73,28 @@ def execute_batch(
     plan: BatchPlan,
     executor: Callable[[BatchItem], dict[str, Any]],
     *,
-    on_error: str = "stop",
+    fail_fast: bool = True,
+    on_error: str | None = None,
 ) -> dict[str, Any]:
-    if on_error not in {"stop", "continue"}:
-        raise BatchPlanError("on_error must be stop or continue")
+    if on_error is not None:
+        if on_error not in {"stop", "continue"}:
+            raise BatchPlanError("on_error must be stop or continue")
+        fail_fast = on_error == "stop"
     results: list[dict[str, Any]] = []
     stopped = False
+    failed_item: dict[str, Any] | None = None
     for item in plan.items:
         Path(item.output_dir).mkdir(parents=True, exist_ok=False)
         result = executor(item)
         results.append({"item": item.__dict__, "result": result})
-        if not result.get("success", False) and on_error == "stop":
+        if not result.get("success", False) and fail_fast:
             stopped = True
+            failed_item = item.__dict__
             break
     return {
         "total": len(plan.items),
         "completed": len(results),
         "stopped_early": stopped,
+        "failed_item": failed_item,
         "results": results,
     }
-

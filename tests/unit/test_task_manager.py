@@ -1,6 +1,8 @@
 import threading
 import time
 
+import pytest
+
 from origin_com_automation.workflows.tasks import TaskManager
 
 
@@ -64,3 +66,72 @@ def test_task_manager_retention_is_bounded():
     assert manager.task_count <= 2
     manager.shutdown()
 
+
+def test_idempotency_key_returns_original_task_and_runs_once():
+    manager = TaskManager(max_results=10)
+    calls = []
+
+    def work(context):
+        calls.append("run")
+        return {"ok": True}
+
+    first = manager.submit("workflow", work, idempotency_key="approved-plan")
+    second = manager.submit("workflow", work, idempotency_key="approved-plan")
+
+    assert second == first
+    assert wait_terminal(manager, first)["state"] == "succeeded"
+    assert calls == ["run"]
+    with pytest.raises(ValueError, match="different task"):
+        manager.submit("other", work, idempotency_key="approved-plan")
+    manager.shutdown()
+
+
+def test_stage_ledger_records_expected_actual_object_and_mutation_key():
+    manager = TaskManager(max_results=10)
+
+    def work(context):
+        context.stage(
+            "import",
+            mutation=True,
+            idempotency_key="mutation:import",
+            object_ref="worksheet:data",
+            expected={"rows": 2},
+        )
+        context.complete_stage(actual={"rows": 2})
+        context.stage("audit", mutation=False, object_ref="worksheet:data")
+        context.complete_stage(actual={"verified": True})
+        return {"ok": True}
+
+    task_id = manager.submit("workflow", work)
+    state = wait_terminal(manager, task_id)
+
+    assert state["completed_stages"] == ["import", "audit"]
+    assert state["completed_mutation_keys"] == ["mutation:import"]
+    assert state["stage_events"][0] == {
+        "stage_id": "import",
+        "state": "completed",
+        "mutation": True,
+        "idempotency_key": "mutation:import",
+        "object_ref": "worksheet:data",
+        "expected": {"rows": 2},
+        "actual": {"rows": 2},
+        "error_code": None,
+        "error_message": None,
+    }
+    manager.shutdown()
+
+
+def test_completed_mutation_key_cannot_be_replayed_in_same_task():
+    manager = TaskManager(max_results=10)
+
+    def work(context):
+        context.stage("write", mutation=True, idempotency_key="mutation:write")
+        context.complete_stage(actual={"written": True})
+        context.stage("write-again", mutation=True, idempotency_key="mutation:write")
+
+    task_id = manager.submit("workflow", work)
+    state = wait_terminal(manager, task_id)
+
+    assert state["state"] == "failed"
+    assert state["error_code"] == "MUTATION_ALREADY_COMPLETED"
+    manager.shutdown()
