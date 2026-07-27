@@ -42,6 +42,7 @@ Desktop.ini
 outputs/
 work/
 artifacts/
+.worktrees/
 
 # Internal Codex planning material is not part of the public plugin package
 docs/superpowers/
