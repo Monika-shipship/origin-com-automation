@@ -14,12 +14,12 @@ historical 0.3.1 evidence and does not claim that a simulated COM test is a live
 - OS: Windows x64
 - Python: 3.13 x64
 - Origin target: 10.1.0.178 x64 when the live suite is available
-- Worktree: `feature/v0.4-consolidation`
+- Branch: local `main`
 - Plugin version: `0.4.0`
 
 ## Automated gates
 
-The final values below are filled from fresh commands before the local branch is merged:
+The values below come from fresh commands against local `main` and the installed plugin cache:
 
 | Gate | Result |
 |---|---|
@@ -31,6 +31,20 @@ The final values below are filled from fresh commands before the local branch is
 | Distribution/plugin/Skill validators | **passed** |
 | Real stdio transport | **passed**; 52 tools and expanded schemas |
 | Live Origin smoke | **not verified in this run**; 9 tests skipped because user-owned PID 44920 was already running |
+
+## Installed-cache audit
+
+- Installed manifest: `0.4.0+codex.20260727193330`.
+- Clean plugin cache: **54.39 MiB**; no `.venv`, `.mypy_cache`, `build`, or generated
+  `origin_com_automation.egg-info` directory remained after bootstrap.
+- External runtime: **327.51 MiB** under
+  `%LOCALAPPDATA%\OriginComAutomation\runtime\0.4.0+codex.20260727193330`.
+- Installed package metadata reports `0.4.0`, and the imported package path resolves from the
+  external runtime `site-packages`, not the plugin cache or development checkout.
+- Installed stdio MCP initialization passed with **52 tools**, expanded `origin_run_task` schema,
+  and a successful `origin_health_check` response.
+- Bootstrap removes only transient build directories that it created itself; pre-existing
+  developer build directories are preserved.
 
 ## Architecture evidence
 
@@ -47,8 +61,9 @@ The final values below are filled from fresh commands before the local branch is
 ## Live-process boundary
 
 The pre-existing user Origin process `PID 44920` is not plugin-owned and remained untouched during
-this validation. The live suite refused to attach while it was running. The plugin does not disable
-or delete cleanup watchdog tasks.
+this validation, including across the installed-cache bootstrap and stdio health check. The live
+suite refused to attach while it was running. The plugin does not disable or delete cleanup
+watchdog tasks.
 
 ## Known limits
 

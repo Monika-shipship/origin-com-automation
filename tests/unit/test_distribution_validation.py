@@ -26,6 +26,8 @@ def test_mcp_uses_external_versioned_non_editable_runtime():
     assert "pip install -e" not in launcher
     assert "runtime_path.ps1" in launcher
     assert "version" in runtime_path
+    assert "preexistingtransient" in bootstrap
+    assert "remove-item" in bootstrap
 
 
 def test_skill_validation_rejects_unknown_frontmatter(tmp_path: Path):

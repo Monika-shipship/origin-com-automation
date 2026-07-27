@@ -13,6 +13,14 @@ if ([string]::IsNullOrWhiteSpace($RuntimeRoot)) {
 $RuntimeRoot = [IO.Path]::GetFullPath($RuntimeRoot)
 $RuntimePython = Join-Path $RuntimeRoot '.venv\Scripts\python.exe'
 $LockPath = Join-Path $RuntimeRoot '.bootstrap.lock'
+$TransientPaths = @(
+    (Join-Path $PluginRoot 'build'),
+    (Join-Path $PluginRoot 'src\origin_com_automation.egg-info')
+)
+$PreexistingTransient = @{}
+foreach ($TransientPath in $TransientPaths) {
+    $PreexistingTransient[$TransientPath] = Test-Path -LiteralPath $TransientPath
+}
 New-Item -ItemType Directory -Force -Path $RuntimeRoot | Out-Null
 
 $lock = $null
@@ -42,6 +50,11 @@ try {
     }
     $Metadata | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $RuntimeRoot 'runtime.json') -Encoding UTF8
 } finally {
+    foreach ($TransientPath in $TransientPaths) {
+        if (-not $PreexistingTransient[$TransientPath] -and (Test-Path -LiteralPath $TransientPath)) {
+            Remove-Item -LiteralPath $TransientPath -Recurse -Force -ErrorAction SilentlyContinue
+        }
+    }
     $lock.Dispose()
 }
 Write-Output "Origin COM Automation external runtime is ready: $RuntimePython"
