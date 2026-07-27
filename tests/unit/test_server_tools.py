@@ -1,5 +1,6 @@
 import asyncio
 import json
+from pathlib import Path
 
 import pytest
 from mcp.server.fastmcp.exceptions import ToolError
@@ -184,6 +185,7 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_plan_figure",
         "origin_execute_figure",
         "origin_plan_workflow",
+        "origin_run_task",
         "origin_execute_workflow",
         "origin_workflow_status",
         "origin_resume_workflow",
@@ -248,6 +250,7 @@ def test_high_level_workflow_schemas_are_expanded_and_execution_is_digest_bound(
 
     for name in [
         "origin_plan_workflow",
+        "origin_run_task",
         "origin_execute_workflow",
         "origin_workflow_status",
         "origin_resume_workflow",
@@ -273,6 +276,101 @@ def test_high_level_workflow_schemas_are_expanded_and_execution_is_digest_bound(
     assert {"spec", "plan_digest", "idempotency_key"} <= set(
         schemas["origin_execute_workflow"]["required"]
     )
+    assert set(schemas["origin_run_task"]["properties"]) == {"spec"}
+    assert schemas["origin_run_task"]["required"] == ["spec"]
+
+
+def test_run_task_returns_all_scientific_decisions_without_creating_controller(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    created = []
+
+    def factory():
+        created.append(True)
+        return FakeController()
+
+    server = create_server(controller=FakeController(), controller_factory=factory)
+    spec = {
+        "intent": "fit_and_plot",
+        "sources": [{"id": "data", "path": str(source)}],
+        "analyses": [{
+            "id": "fit",
+            "method": "linear_fit",
+            "worksheet_ref": "[Data]Sheet1",
+            "x_column": "A",
+            "y_columns": ["B"],
+        }],
+        "outputs": {"project_path": str(tmp_path / "result.opju")},
+    }
+
+    result = asyncio.run(server.call_tool("origin_run_task", {"spec": spec}))
+
+    assert result[1]["success"] is True
+    assert result[1]["data"]["state"] == "needs_input"
+    fields = {item["field"] for item in result[1]["data"]["required_decisions"]}
+    assert fields == {
+        "scientific_contract.branch",
+        "scientific_contract.input_units.x",
+        "scientific_contract.input_units.y",
+        "scientific_contract.fit_method",
+    }
+    assert created == []
+
+
+def test_run_task_executes_complete_spec_synchronously_with_internal_keys(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    output = tmp_path / "result.opju"
+    created = []
+
+    class RunTaskController(FakeController):
+        origin_version = "10.1.0.178"
+
+        def start(self, **kwargs):
+            self.calls.append(("start", kwargs))
+            return ResultEnvelope.ok({"session_id": "owned", "owned": True, "pid": 1234})
+
+        def import_data(self, **kwargs):
+            self.calls.append(("import_data", kwargs))
+            return ResultEnvelope.ok(
+                {"worksheet_ref": "[Data]input", "rows": 1, "non_empty_counts": [1, 1]}
+            )
+
+        def save_project_copy(self, **kwargs):
+            self.calls.append(("save_project_copy", kwargs))
+            target = Path(kwargs["target_path"])
+            target.write_bytes(b"Origin project")
+            return ResultEnvelope.ok({"path": str(target), "size": target.stat().st_size})
+
+    def factory():
+        controller = RunTaskController()
+        created.append(controller)
+        return controller
+
+    server = create_server(controller=FakeController(), controller_factory=factory)
+    spec = {
+        "intent": "import_and_plot",
+        "sources": [{"id": "data", "path": str(source)}],
+        "outputs": {"project_path": str(output)},
+    }
+
+    result = asyncio.run(server.call_tool("origin_run_task", {"spec": spec}))
+
+    assert result[1]["success"] is True
+    data = result[1]["data"]
+    assert data["state"] == "succeeded"
+    assert data["needs_input"] is False
+    assert data["plan_digest"]
+    assert data["idempotency_key"].startswith("run-task:")
+    assert data["verification"]["project_saved"] is True
+    assert data["shutdown"]["completed"] is True
+    assert len(created) == 1
+    assert [name for name, _ in created[0].calls] == [
+        "start",
+        "import_data",
+        "save_project_copy",
+        "shutdown",
+    ]
 
 
 def test_workflow_audit_uses_bounded_targets_and_standard_envelope(tmp_path):

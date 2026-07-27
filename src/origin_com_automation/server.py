@@ -18,7 +18,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .capabilities import capability_report
 from .com.origin_api import OriginController
-from .contracts import ResultEnvelope
+from .contracts import Artifact, ResultEnvelope
 from .data_inspection import DataInspectionError, inspect_data_source
 from .graphs.catalog import graph_catalog
 from .graphs.palettes import palette_catalog
@@ -331,6 +331,7 @@ def create_server(
                 "origin_execute_figure",
                 "origin_submit_batch",
                 "origin_plan_workflow",
+                "origin_run_task",
                 "origin_execute_workflow",
                 "origin_resume_workflow",
                 "origin_audit_result",
@@ -949,6 +950,118 @@ def create_server(
         except Exception as exc:
             return ResultEnvelope.fail("WORKFLOW_PLAN_FAILED", str(exc))
         return ResultEnvelope.ok(plan.to_dict(), origin_version=version)
+
+    @strict_tool(name="origin_run_task")
+    def origin_run_task(spec: WorkflowSpec) -> ResultEnvelope:
+        """Plan and synchronously complete one ordinary Origin task in one call.
+
+        Missing scientific choices are returned together before the workflow
+        controller is created. Complete plans use the same engine and native
+        Origin execution path as the explicit plan/execute tools.
+        """
+        try:
+            # Planning is deliberately controller-free so an incomplete
+            # scientific request never creates or starts an Origin session.
+            plan = compile_workflow(spec, origin_version=None)
+        except Exception as exc:
+            return ResultEnvelope.fail("WORKFLOW_PLAN_FAILED", str(exc))
+
+        plan_data = plan.to_dict()
+        if plan.required_decisions:
+            return ResultEnvelope.ok(
+                {
+                    "state": "needs_input",
+                    "needs_input": True,
+                    "required_decisions": list(plan.required_decisions),
+                    "plan_digest": plan.digest,
+                    "plan": plan_data,
+                }
+            )
+        if plan.blockers:
+            return ResultEnvelope.fail(
+                "WORKFLOW_PREFLIGHT_BLOCKED",
+                "Workflow contains blockers and cannot be executed",
+                data={
+                    "state": "blocked",
+                    "needs_input": False,
+                    "plan_digest": plan.digest,
+                    "blockers": list(plan.blockers),
+                    "plan": plan_data,
+                },
+            )
+
+        idempotency_key = spec.execution.idempotency_key or f"run-task:{plan.digest}"
+        try:
+            receipt = workflow_engine.execute(
+                spec,
+                expected_digest=plan.digest,
+                idempotency_key=idempotency_key,
+            )
+        except (OSError, ValueError, WorkflowExecutionError) as exc:
+            return ResultEnvelope.fail(
+                getattr(exc, "code", "WORKFLOW_EXECUTION_FAILED"),
+                str(exc),
+                data={
+                    "state": "failed",
+                    "needs_input": False,
+                    "plan_digest": plan.digest,
+                    "idempotency_key": idempotency_key,
+                },
+            )
+
+        completed = set(receipt.get("completed_stages", []))
+        methods = {
+            "formulas": [
+                {
+                    "id": item.id,
+                    "formula": item.formula,
+                    "native_function": item.native_function,
+                    "recalculate_mode": item.recalculate_mode,
+                }
+                for item in spec.formulas
+            ],
+            "analyses": [
+                {
+                    "id": item.id,
+                    "method": item.method,
+                    "backend": item.backend_policy,
+                    "create_operation": item.create_operation,
+                    "recalculate_mode": item.recalculate_mode,
+                }
+                for item in spec.analyses
+            ],
+        }
+        data = {
+            **receipt,
+            "state": "succeeded" if receipt.get("success") else "failed",
+            "needs_input": False,
+            "plan_digest": plan.digest,
+            "idempotency_key": idempotency_key,
+            "methods": methods,
+            "stable_refs": receipt.get("objects", {}),
+            "verification": {
+                "project_saved": "save" in completed,
+                "completed_stages": receipt.get("completed_stages", []),
+                "checkpoint_count": len(receipt.get("checkpoints", [])),
+            },
+            "shutdown": {
+                "completed": "shutdown" in completed,
+                "owned_instance_only": True,
+            },
+        }
+        artifacts = [
+            Artifact(path=item["path"], kind=item["kind"])
+            for item in receipt.get("artifacts", [])
+            if isinstance(item, dict) and {"path", "kind"} <= set(item)
+        ]
+        if receipt.get("success"):
+            return ResultEnvelope.ok(data, artifacts=artifacts)
+        return ResultEnvelope.fail(
+            receipt.get("error_code") or "WORKFLOW_EXECUTION_FAILED",
+            receipt.get("error_message") or "Workflow execution failed",
+            data=data,
+            artifacts=artifacts,
+        )
 
     @strict_tool(name="origin_execute_workflow")
     def origin_execute_workflow(
