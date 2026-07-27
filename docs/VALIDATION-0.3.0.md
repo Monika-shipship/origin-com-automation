@@ -62,8 +62,17 @@ and forwards the scientific derivative method and order from `ScientificContract
 
 ## Installed plugin verification
 
-The final local Codex reinstall and real stdio MCP checks will be recorded here after the release
-candidate is committed and fast-forwarded into the local `main` branch.
+- Personal marketplace status: installed and enabled.
+- Installed version: `0.3.0+codex.20260727081330`.
+- Installed root:
+  `%USERPROFILE%\.codex\plugins\cache\personal\origin-com-automation\0.3.0+codex.20260727081330`.
+- Installed MCP tool count: 51.
+- All six high-level workflow tools were present.
+- Real stdio MCP transport initialized successfully and returned successful
+  `origin_health_check`, workflow-scoped `origin_capabilities`, and offline
+  `origin_plan_workflow` responses.
+- Offline planning returned a nonempty digest and `executor_executable=true` without starting
+  Origin.
 
 ## Known limits
 
