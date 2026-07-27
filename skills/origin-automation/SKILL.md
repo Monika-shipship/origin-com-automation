@@ -7,8 +7,8 @@ description: Use when Codex needs to inspect or control OriginLab on Windows thr
 
 Use the MCP tools as the deterministic control surface. Resolve objects by returned names/refs,
 preserve the user's scientific choices, and finish through the shortest route that still verifies
-the requested result. Prefer one digest-bound FigureSpec execution for a clear end-to-end data or
-restyle job; use focused tools when the task needs exact object-level control.
+the requested result. Prefer one digest-bound WorkflowSpec execution for a clear end-to-end task;
+use FigureSpec for the legacy two-route contract and focused tools for exact object-level control.
 
 For new data, preserve editability by default: import with `source_mode="linked"`, create derived
 columns with `origin_set_column_formula` so Origin retains the `F(x)` formula, and analyze with
@@ -35,6 +35,12 @@ Choose exactly one primary route and do not mix in diagnostic work unless its tr
    Use this route when input, analysis choices, plot roles, OPJU output, exports, and QA fit the
    strict schema. Use `origin_submit_batch` for two or more independent items. Do not expand this
    route into the low-level call sequence unless planning reports a specific unsupported feature.
+6. **Intent-aware workflow (preferred for complete tasks):** call `origin_plan_workflow` once with
+   the complete source, scientific contract, formulas, analyses, plots, outputs, and QA.
+   Ask all `required_decisions` together. Replan once with those answers. Execute one approved digest with
+   `origin_execute_workflow` and a unique `idempotency_key`; poll `origin_workflow_status` only
+   while queued or running. Use `origin_resume_workflow` only when the ledger exposes a verified
+   checkpoint. Finish with bounded `origin_audit_result` targets and `origin_export_manifest`.
 
 For Matrix, Image Page, Data Connector, `F(x)` formula, native operation, template, folder, or Note work, use the
 corresponding focused `origin_manage_*` or native-analysis tool inside route 3 or 4. Call
@@ -52,6 +58,10 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 5. Read or import the smallest contiguous blocks that contain all required columns. Import and write tools already perform one exact internal readback; inspect connector state, `readback_verified`, `column_profiles`, `non_empty_count`, and the returned stable `worksheet_ref` instead of adding a reassurance call. If a defining X/Y column is empty, mismatched, or unconfirmed, stop before analysis or plotting.
 6. Add derived columns with `origin_set_column_formula`, or `origin_transform_worksheet(action="calculated_column")`, and require formula, script, range, `SVRM`, and value readback confirmation. Materialize values only after the user explicitly selects `execution_mode="materialized"`.
 7. Run the exact requested analysis once with explicit row bounds, `row_order`, filters, method, and options. Default to an Origin-native Analysis Operation. If the exact method/options are unavailable natively, stop with the capability error; never substitute Python, a fit, derivative, smoothing, branch, or range.
+   Prefer verified native functions over expanded arithmetic when their semantics match. For
+   derivatives, select the verified `differentiate` operation contract when compatible;
+   `dderivative` requires explicit supported-unverified acceptance. Do not change derivative semantics,
+   boundary conventions, branch, range, or point placement merely to reach a native route.
 8. Create a graph only if it does not exist. Apply binding, axes, scales, styles, categories, and legend together in one `origin_configure_graph` call per final graph. Prefer structured controls over exploratory LabTalk.
 9. Verify only result-defining invariants: record count/values, required column labels, formula/operation state, plot X/Y/label sources, axis state, and non-empty artifacts. Require `label_source_status=resolved` when labels are requested.
 10. Run a second `origin_list_objects` only when page structure or plot bindings changed. Analysis-only, formatting-only, and export-only tasks do not need a second audit unless validation fails.
@@ -67,6 +77,8 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - The optional second object audit is reserved for changed structure/bindings or one lookup recovery.
 - A FigureSpec job uses one plan and one execution call. Poll `origin_task_status` only for an
   asynchronous submission; do not poll a synchronous execution.
+- A WorkflowSpec job uses one successful plan, one approved digest, and one execution submission.
+  Never split it into exploratory low-level mutations after approval.
 - Query `origin_graph_catalog`, `origin_palette_catalog`, `origin_list_graph_templates`, or
   `origin_query_knowledge` only when their result is needed to choose or validate the requested
   route. They are discovery tools, not routine preambles.

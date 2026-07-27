@@ -29,10 +29,11 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 - 使用 Origin 原生线性拟合，或者显式选择 Python 兼容分析；
 - 管理 Matrix、Image Page、Project Folder 和 Notes；
 - 导出 PNG、TIFF、PDF 或 SVG，并检查图片是否为空、尺寸是否合理；
-- 使用 FigureSpec 描述一整套任务，或串行执行批量任务。
+- 使用带意图理解、摘要审批和结果验证的高级工作流，或串行执行批量任务。
 
 版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)和
-[0.2.1 验证报告](docs/VALIDATION-0.2.1.md)。
+[0.2.1 验证报告](docs/VALIDATION-0.2.1.md)。包括本地 `0.3.0` 候选版在内的每版变化见
+[完整版本历史](CHANGELOG.md)。
 
 <!-- section:requirements -->
 ## 运行环境
@@ -89,16 +90,17 @@ codex plugin add origin-com-automation@personal
 保持图形直接绑定原表，另存为 device-reviewed.opju 并导出。不要覆盖原项目。
 ```
 
-一个健康的新数据任务通常只走下面这条关键路径：
+对于完整的新数据、分析或绘图任务，`0.3.0` 推荐走更短的高级关键路径：
 
 1. `origin_health_check` 检查环境；
-2. `origin_start` 创建插件自有的后台 Origin；
-3. `origin_import_data`，默认使用 `source_mode="linked"`；
-4. 只回读决定结果的 X/Y 列，确认数量和内容；
-5. 调用 `origin_set_column_formula` 和/或 `origin_run_analysis`；
-6. 调用 `origin_create_plot`，再用一次 `origin_configure_graph` 完成主要配置；
-7. `origin_save_project_copy` 和 `origin_export_graph`；
-8. 验证文件、图源和分析对象，最后 `origin_shutdown`。
+2. 向 `origin_plan_workflow` 提交完整 `WorkflowSpec`，离线完成 `plan -> validate`；
+3. 一次性回答全部 `required_decisions`，然后只重新规划一次；
+4. 用已批准 digest 和唯一 `idempotency_key` 调用 `origin_execute_workflow`；
+5. 用 `origin_workflow_status` 查看进度；只有存在已验证检查点时才使用 `origin_resume_workflow`；
+6. 用 `origin_audit_result` 定向验收，并用 `origin_export_manifest` 导出分析清单。
+
+引擎会自行创建隐藏的 Origin 实例，默认 `source_mode="linked"`，以 `fail_fast=true` 执行，
+逐项验证修改，另存项目并关闭自有实例。特殊对象级任务仍可使用底层工具。
 
 <!-- section:session-modes -->
 ## Origin 会话模式
@@ -116,7 +118,7 @@ Origin COM 没有提供可靠的“COM 代理对应哪个 PID”接口。因此�
 <!-- section:tool-surface -->
 ## 工具总览
 
-MCP Server 共暴露 45 个结构化工具。对于专业图形、分析或对象操作，可以先调用
+MCP Server 共暴露 51 个结构化工具。对于专业图形、分析或对象操作，可以先调用
 `origin_capabilities`，查看当前 Origin 版本下该能力属于 `verified`（已验证）、
 `supported_unverified`（支持但未完整验证）还是 `unsupported`（不支持）。
 
@@ -130,7 +132,7 @@ MCP Server 共暴露 45 个结构化工具。对于专业图形、分析或对�
 | 数据分析 | `origin_run_analysis`、`origin_run_xfunction`、`origin_list_analysis_operations`、`origin_get_analysis_operation`、`origin_recalculate_analysis`、`origin_manage_analysis_template`、`origin_execute_labtalk` |
 | 图形 | `origin_graph_catalog`、`origin_palette_catalog`、`origin_list_graph_templates`、`origin_create_plot`、`origin_create_graph`、`origin_configure_graph`、`origin_manage_graph_layout`、`origin_apply_graph_template` |
 | 导出和图像验证 | `origin_export_graph`、`origin_view_graph`、`origin_inspect_png` |
-| 高级工作流 | `origin_plan_figure`、`origin_execute_figure`、`origin_submit_batch`、`origin_task_status`、`origin_cancel_task` |
+| 高级工作流 | `origin_plan_workflow`、`origin_execute_workflow`、`origin_workflow_status`、`origin_resume_workflow`、`origin_audit_result`、`origin_export_manifest`、`origin_plan_figure`、`origin_execute_figure`、`origin_submit_batch`、`origin_task_status`、`origin_cancel_task` |
 
 所有工具返回统一结构：
 
@@ -146,6 +148,14 @@ artifacts, duration_ms, origin_version
 ## 高效关键路径
 
 Skill 会先判断任务属于哪条路线，再调用工具，避免健康任务反复进入诊断和试错流程。
+
+### 完整意图工作流（推荐）
+
+在启动 Origin 前先调用 `origin_plan_workflow`。参数契约会把信息分为用户已提供、可确定推导、
+安全默认值和 `required_decisions`。扫描分支、数据范围、单位、模型、导数方法、缺失值和归一化
+等科学选择会一次列全，插件不会猜。批准一个 digest 后，`origin_execute_workflow` 以
+`fail_fast=true` 一次执行，记录稳定对象引用和实际值，按阶段保存检查点和可复现清单。
+`origin_resume_workflow` 只从首个未完成阶段继续，不重放已完成的修改键。
 
 ### 环境诊断
 
@@ -216,6 +226,13 @@ NumPy/SciPy 分析，也不会把外部结果粘贴回表格后冒充 Origin 原
 函数名都会验证。Analysis Template 和通用 X-Function 仍受能力目录约束，只有完成对应版本的
 真实结果验证后才能标记为已验证。
 
+工作流层使用 `origin_native_preferred`：优先选择已验证的 Origin 标量函数、列公式、X-Function
+或 Analysis Operation。只有用户显式选择 `external_explicit` 才允许 Python；原生路线不可用时
+会失败，不会静默降级。对于导数，本机 Origin 10.1 的 `differentiate` 参数签名已经登记，包含
+`iy`、`order`、`smooth`、`poly`、`npts`、`oy` 和 `plot`；`dderivative` 仍属于
+supported-unverified，必须明确接受后才能使用。无论选择哪条路线，都不能改变用户指定的导数
+算法、边界约定、数据范围、扫描分支或结果点位置。
+
 <!-- section:architecture -->
 ## 系统架构
 
@@ -284,6 +301,12 @@ COM 方法不报错只能说明调用返回，不能证明结果正确。导入�
 
 <!-- section:figurespec-batch -->
 ## FigureSpec、批量任务与图形
+
+`WorkflowSpec` 是 `0.3.0` 推荐的高层契约，把数据源、数据参数、科学参数、公式、原生分析、
+绘图、输出、QA 和执行策略明确分开。六个高层工具 `origin_plan_workflow`、
+`origin_execute_workflow`、`origin_workflow_status`、`origin_resume_workflow`、
+`origin_audit_result` 和 `origin_export_manifest` 最终仍调用同一套底层 Controller，
+不会形成两套不一致的安全或验证逻辑。
 
 `origin_plan_figure` 在不修改 Origin 的情况下验证严格 FigureSpec，返回 SHA-256 digest、执行阶段、
 解析路径、阻塞项、警告和能力状态。执行时必须提交同一个 digest，因此修改数据模式、分析方法或
@@ -433,5 +456,6 @@ LICENSE 文件为准。
 
 版本历史和验证证据：
 
+- [完整更新记录](CHANGELOG.md)
 - [Origin COM Automation 0.2.0 验证报告](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 验证报告](docs/VALIDATION-0.2.1.md)

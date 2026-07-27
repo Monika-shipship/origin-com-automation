@@ -99,10 +99,42 @@ def test_readmes_include_equivalent_independence_and_risk_disclaimers():
 def test_readmes_list_every_public_mcp_tool():
     tool_names = TOOL_NAME.findall(_read(SERVER))
 
-    assert len(tool_names) == 45
+    assert len(tool_names) == 51
     for text in (_read(ENGLISH), _read(CHINESE)):
         missing = [name for name in tool_names if name not in text]
         assert missing == []
+
+
+def test_readmes_document_the_same_030_workflow_contract():
+    for text in (_read(ENGLISH), _read(CHINESE)):
+        for required in [
+            "0.3.0",
+            "origin_plan_workflow",
+            "origin_execute_workflow",
+            "origin_workflow_status",
+            "origin_resume_workflow",
+            "origin_audit_result",
+            "origin_export_manifest",
+            "required_decisions",
+            "idempotency_key",
+            "fail_fast=true",
+            "origin_native_preferred",
+            "external_explicit",
+            "dderivative",
+            "differentiate",
+            "CHANGELOG.md",
+        ]:
+            assert required in text
+
+
+def test_changelog_covers_every_public_release():
+    changelog = ROOT / "CHANGELOG.md"
+    assert changelog.is_file()
+    text = _read(changelog)
+    for version in ["0.1.0", "0.2.0", "0.2.1", "0.3.0"]:
+        assert f"## [{version}]" in text
+    for heading in ["### Added", "### Changed", "### Safety", "### Validation", "### Known limits"]:
+        assert heading in text
 
 
 def test_readme_local_links_resolve_to_repository_files():

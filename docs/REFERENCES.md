@@ -1,6 +1,6 @@
 # References and Attribution
 
-Version 0.2 was designed after reviewing two public Origin automation projects. They informed
+Versions 0.2 and 0.3 were designed after reviewing two public Origin automation projects. They informed
 tool organization and workflow boundaries only. This repository does not copy their source code,
 templates, images, palettes, prompts, or branded assets.
 
@@ -12,6 +12,9 @@ templates, images, palettes, prompts, or branded assets.
 - Ideas considered: broad Origin object coverage, structured X-Function access, Origin-native
   analysis operations, FigureSpec-style requests, batch execution, graph previews, templates, and
   local documentation discovery.
+- Version 0.3 ideas considered: an intent contract above the tool layer, declarative planning,
+  native-function selection, fail-fast batches, stable refs, checkpoints, targeted audits, and
+  reproducibility manifests.
 - Local implementation: independently written for this plugin's serialized pywin32 COM worker,
   result envelope, ownership gates, source protection, and readback requirements.
 

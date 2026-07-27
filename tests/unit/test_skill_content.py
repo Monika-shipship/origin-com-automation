@@ -39,3 +39,14 @@ def test_origin_skill_has_trigger_metadata_and_safe_workflow():
     assert 'backend="origin_native"' in text
     assert 'backend="python"' in text
     assert "Never silently fall back" in text
+    assert "origin_plan_workflow" in text
+    assert "origin_execute_workflow" in text
+    assert "origin_workflow_status" in text
+    assert "origin_resume_workflow" in text
+    assert "origin_audit_result" in text
+    assert "origin_export_manifest" in text
+    assert "Ask all `required_decisions` together" in text
+    assert "Execute one approved digest" in text
+    assert "dderivative" in text
+    assert "differentiate" in text
+    assert "Do not change derivative semantics" in text
