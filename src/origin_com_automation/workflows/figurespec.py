@@ -2,18 +2,14 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
 from ..graphs.catalog import graph_catalog
-
-
-class StrictModel(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+from ..utils.hashing import canonical_digest
+from .models import StrictModel
 
 
 class FigureInput(StrictModel):
@@ -103,9 +99,7 @@ class FigureSpec(StrictModel):
 
 
 def figure_spec_digest(spec: FigureSpec) -> str:
-    payload = spec.model_dump(mode="json", exclude_none=True)
-    encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return hashlib.sha256(encoded).hexdigest()
+    return canonical_digest(spec)
 
 
 def compile_figure_spec(

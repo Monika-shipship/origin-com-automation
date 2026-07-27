@@ -26,8 +26,8 @@ Typical uses include:
 
 Release evidence is recorded in [0.2.0 validation](docs/VALIDATION-0.2.0.md) and
 [0.2.1 validation](docs/VALIDATION-0.2.1.md), with the current candidate covered by
-[0.3.0 validation](docs/VALIDATION-0.3.0.md) and
-[0.3.1 validation](docs/VALIDATION-0.3.1.md). See the complete [version history](CHANGELOG.md).
+[0.3.0 validation](docs/VALIDATION-0.3.0.md), [0.3.1 validation](docs/VALIDATION-0.3.1.md), and
+the current [0.4.0 validation](docs/VALIDATION-0.4.0.md). See the complete [version history](CHANGELOG.md).
 
 <!-- section:requirements -->
 ## Requirements
@@ -42,8 +42,10 @@ The verified environment is Windows 11 x64, Python 3.13 x64, and Origin `10.1.0.
 Origin releases may work, but specialized behavior remains unverified until a version-specific
 live test proves the output and readback.
 
-The bootstrap creates a repository-local `.venv`. It does not install packages into the system
-Python environment. Dependencies include pywin32, MCP, Pydantic, NumPy/SciPy, OpenPyXL, Pillow,
+The bootstrap keeps development dependencies in a repository-local `.venv`, but the MCP launcher
+does not import from that checkout. It creates a versioned non-editable runtime under
+`%LOCALAPPDATA%\OriginComAutomation\runtime\<plugin-version>`, so installed MCP code and metadata
+match the cached plugin. Dependencies include pywin32, MCP, Pydantic, NumPy/SciPy, OpenPyXL, Pillow,
 psutil, pandas, and xlrd.
 
 <!-- section:setup -->
@@ -56,8 +58,8 @@ Clone or download the repository, open PowerShell in the repository root, and ru
 & '.\scripts\diagnose.ps1'
 ```
 
-The MCP server uses the relative interpreter declared in `.mcp.json`, so the source folder and its
-`.venv` stay portable together. Install or refresh the personal Codex plugin with:
+The MCP server uses `scripts/run_mcp.ps1`, which resolves the cached plugin root and bootstraps the
+external versioned runtime on first use. Install or refresh the personal Codex plugin with:
 
 ```powershell
 codex plugin add origin-com-automation@personal
@@ -86,7 +88,7 @@ named graph, preserve its worksheet binding, save as device-reviewed.opju, and e
 Do not overwrite the source project.
 ```
 
-For an ordinary complete new-data, analysis, or figure task, `0.3.1` uses one high-level call:
+For an ordinary complete new-data, analysis, or figure task, `0.4.0` keeps the `0.3.1` one-call path:
 
 1. call `origin_run_task` with the complete `WorkflowSpec`;
 2. if it returns `needs_input`, answer all `required_decisions` together and call it once more;
@@ -283,14 +285,16 @@ from a serial queue.
 
 ### MCP and schemas
 
-`src/origin_com_automation/server.py` defines strict FastMCP tools. Pydantic-backed schemas expose
+`src/origin_com_automation/server.py` defines strict FastMCP tools, while `mcp/schemas.py` and
+`mcp/helpers.py` own reusable schemas and registration helpers. Pydantic-backed schemas expose
 enums, structured graph options, FigureSpec, filters, overwrite policies, and connector settings.
 Unknown fields are rejected instead of silently ignored.
 
 ### Controller and safety state
 
-`com/origin_api.py` orchestrates projects, worksheets, analyses, graphs, and artifacts. It tracks
-whether the session is owned, attached, exclusive, timed out, or poisoned; records protected source
+`com/origin_api.py` orchestrates projects, worksheets, analyses, graphs, and artifacts. Pure
+worksheet, graph, and project helpers are kept in `com/worksheet_support.py`,
+`com/graph_support.py`, and `com/project_support.py`. It tracks whether the session is owned, attached, exclusive, timed out, or poisoned; records protected source
 projects; and converts exceptions into stable error codes. Global operation serialization sits in
 front of the STA queue so concurrent MCP requests cannot interleave Origin mutations.
 
@@ -305,7 +309,8 @@ not a general command injection surface.
 
 The `objects/` package builds validated plans for Data Connectors, worksheet transforms, Matrix,
 Image Page, Project Folder, and Notes actions. Graph catalog, layout, template, palette, and preview
-logic lives in `graphs/`. File inspection and Python compatibility analyses are separated into
+logic lives in `graphs/`. Shared deterministic hashing, canonical model digests, strict models,
+and controller metadata live in `utils/`. File inspection and Python compatibility analyses are separated into
 services so they do not hold COM objects.
 
 ### Verification instead of no-exception success
@@ -330,8 +335,10 @@ warnings, and error codes. Worksheet values and other sensitive scientific data 
 <!-- section:figurespec-batch -->
 ## FigureSpec And Batch Workflows
 
-`WorkflowSpec` is the preferred `0.3.0` contract, with `0.3.1` adding its direct one-call route. It
-separates source/data/scientific contracts from formulas, native analyses, plots, outputs, QA, and
+`WorkflowSpec` is the preferred declarative contract. In `0.4.0`, FigureSpec is a compatibility
+adapter over the same WorkflowEngine, and task status, batch execution, graph catalog, MCP schemas,
+COM support helpers, and shared utilities have one authoritative implementation. It separates
+source/data/scientific contracts from formulas, native analyses, plots, outputs, QA, and
 execution policy. `origin_run_task`, `origin_plan_workflow`, `origin_execute_workflow`, `origin_workflow_status`,
 `origin_resume_workflow`, `origin_audit_result`, and `origin_export_manifest` share the same lower
 level Controller as every focused tool, so safety and verification behavior do not fork.
@@ -504,3 +511,4 @@ Version history and test evidence:
 - [Origin COM Automation 0.2.1 validation](docs/VALIDATION-0.2.1.md)
 - [Origin COM Automation 0.3.0 validation](docs/VALIDATION-0.3.0.md)
 - [Origin COM Automation 0.3.1 validation](docs/VALIDATION-0.3.1.md)
+- [Origin COM Automation 0.4.0 validation](docs/VALIDATION-0.4.0.md)

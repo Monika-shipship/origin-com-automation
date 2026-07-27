@@ -5,10 +5,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..graphs.catalog import graph_catalog, validate_graph_request
 
-SUPPORTED_GRAPH_TYPES = {
-    "scatter", "line", "line_symbol", "semilog", "loglog", "bar", "multi_layer"
-}
+
+SUPPORTED_GRAPH_TYPES = frozenset(graph_catalog())
 
 
 @dataclass(frozen=True)
@@ -26,10 +26,12 @@ def build_graph_spec(
     y_columns: list[str],
     options: dict[str, Any] | None = None,
 ) -> GraphSpec:
-    if graph_type not in SUPPORTED_GRAPH_TYPES:
-        raise ValueError(f"Unsupported Origin graph type: {graph_type}")
     if not x_column.strip() or not y_columns or any(not column.strip() for column in y_columns):
         raise ValueError("x_column and at least one non-empty y_column are required")
+    try:
+        validate_graph_request(graph_type, {"x": x_column, "y": y_columns})
+    except ValueError as exc:
+        raise ValueError(str(exc)) from exc
     normalized_options = dict(options or {})
     unknown = sorted(set(normalized_options) - {"template"})
     if unknown:

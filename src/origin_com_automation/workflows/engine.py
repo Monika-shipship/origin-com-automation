@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from .. import __version__
 from ..contracts import ResultEnvelope
+from ..utils.hashing import sha256_file
+from ..utils.runtime import controller_origin_version
 from .manifest import build_workflow_manifest, write_manifest_artifacts
 from .planner import PlannedStage, WorkflowPlan, compile_workflow
 from .spec import WorkflowSpec, workflow_spec_digest
@@ -35,12 +37,7 @@ def _atomic_json(path: Path, payload: dict[str, Any]) -> None:
     os.replace(temporary, path)
 
 
-def _sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+_sha256 = sha256_file
 
 
 def _import_target_name(worksheet_ref: str | None, source_id: str) -> str:
@@ -134,7 +131,7 @@ class WorkflowEngine:
         )
 
     def status(self, task_id: str) -> dict[str, Any]:
-        return self.tasks.status(task_id)
+        return self.tasks.read_status(task_id)
 
     def _paths(self, spec: WorkflowSpec, idempotency_key: str) -> tuple[Path, Path]:
         output = Path(spec.outputs.project_path).expanduser().resolve()
@@ -273,6 +270,10 @@ class WorkflowEngine:
         idempotency_key: str,
         context: Any = None,
         _resume: bool = False,
+        validate_artifacts: bool = True,
+        require_owned: bool = True,
+        verify_import_evidence: bool = True,
+        final_qa_worksheet_ref: str | None = None,
     ) -> dict[str, Any]:
         if not idempotency_key.strip():
             raise WorkflowExecutionError("idempotency key is required")
@@ -401,8 +402,10 @@ class WorkflowEngine:
                 elif stage.id == "start":
                     result = controller.start(visible=spec.visible, attach=False, exclusive=False)
                     if result.success:
-                        session_started = bool(_result_data(result).get("owned"))
-                        if not session_started:
+                        session_started = bool(_result_data(result).get("owned")) or (
+                            result.success and not require_owned
+                        )
+                        if not session_started and require_owned:
                             result = ResultEnvelope.fail(
                                 "SESSION_NOT_OWNED",
                                 "Workflow execution requires a plugin-owned Origin instance",
@@ -418,22 +421,42 @@ class WorkflowEngine:
                 elif stage.id.startswith("import:"):
                     source_id = stage.id.split(":", 1)[1]
                     source = next(item for item in spec.sources if item.id == source_id)
-                    imported = controller.import_data(
-                        file_path=source.path,
-                        worksheet_name=_import_target_name(source.worksheet_ref, source.id),
-                        sheet_name=source.sheet_name,
-                        has_header=source.has_header,
-                        target_mode="new_workbook",
-                        source_mode="linked" if source.import_mode != "snapshot" else "snapshot",
-                    )
+                    if source.import_mode == "project":
+                        imported = controller.open_project(source_path=source.path)
+                    else:
+                        imported = controller.import_data(
+                            file_path=source.path,
+                            worksheet_name=_import_target_name(source.worksheet_ref, source.id),
+                            sheet_name=source.sheet_name,
+                            has_header=source.has_header,
+                            target_mode="new_workbook",
+                            source_mode="linked" if source.import_mode != "snapshot" else "snapshot",
+                        )
                     if imported.success:
+                        if source.import_mode == "project":
+                            result = ResultEnvelope.ok(
+                                {
+                                    **_result_data(imported),
+                                    "project_ref": source.path,
+                                },
+                                warnings=imported.warnings,
+                                artifacts=imported.artifacts,
+                            )
+                            if source.worksheet_ref:
+                                worksheet_refs[source.worksheet_ref] = source.worksheet_ref
+                            # A project input is already a validated working copy source;
+                            # there is no worksheet import evidence to read here.
+                            imported = result
+
                         imported_data = _result_data(imported)
                         worksheet_ref = imported_data.get("worksheet_ref") or source.worksheet_ref
                         verified_rows = imported_data.get("verified_rows")
                         if not isinstance(verified_rows, int):
                             rows = imported_data.get("rows")
                             verified_rows = rows if isinstance(rows, int) else None
-                        if verified_rows is not None:
+                        if source.import_mode == "project":
+                            pass
+                        elif verified_rows is not None:
                             if verified_rows < spec.qa.minimum_rows:
                                 result = ResultEnvelope.fail(
                                     "WORKFLOW_DATA_VERIFICATION_FAILED",
@@ -448,7 +471,7 @@ class WorkflowEngine:
                                     warnings=imported.warnings,
                                     artifacts=imported.artifacts,
                                 )
-                        else:
+                        elif verify_import_evidence:
                             verified = controller.read_worksheet(
                                 worksheet_ref, data_format="variant"
                             )
@@ -477,6 +500,14 @@ class WorkflowEngine:
                                         warnings=imported.warnings + verified.warnings,
                                         artifacts=imported.artifacts + verified.artifacts,
                                     )
+                        else:
+                            if source.worksheet_ref:
+                                worksheet_refs[source.worksheet_ref] = str(worksheet_ref)
+                            result = ResultEnvelope.ok(
+                                imported_data,
+                                warnings=imported.warnings,
+                                artifacts=imported.artifacts,
+                            )
                     else:
                         result = imported
                 elif stage.id == "verify_data":
@@ -552,11 +583,29 @@ class WorkflowEngine:
                     )
                     if result.success:
                         path = Path(plan.resolved_project_output)
-                        if not path.is_file() or path.stat().st_size < 8:
+                        if validate_artifacts and (not path.is_file() or path.stat().st_size < 8):
                             result = ResultEnvelope.fail(
                                 "PROJECT_SAVE_UNCONFIRMED",
                                 f"Saved project was not found or was too small: {path}",
                             )
+                        elif final_qa_worksheet_ref:
+                            verified = controller.read_worksheet(
+                                resolve_worksheet(final_qa_worksheet_ref),
+                                data_format="variant",
+                            )
+                            if not verified.success:
+                                result = verified
+                            else:
+                                values = _result_data(verified).get("values", [])
+                                if len(values) < spec.qa.minimum_rows:
+                                    result = ResultEnvelope.fail(
+                                        "WORKFLOW_DATA_VERIFICATION_FAILED",
+                                        "Worksheet row count is below minimum_rows",
+                                        data={
+                                            "rows": len(values),
+                                            "minimum_rows": spec.qa.minimum_rows,
+                                        },
+                                    )
                 elif stage.id.startswith("export:"):
                     _, graph_id, export_format = stage.id.split(":", 2)
                     export = next(item for item in spec.outputs.exports if item.graph_id == graph_id and item.format == export_format)
@@ -574,7 +623,10 @@ class WorkflowEngine:
                         plan,
                         ledger,
                         plugin_version=__version__,
-                        origin_version=getattr(controller, "origin_version", plan.origin_version),
+                        origin_version=controller_origin_version(
+                            controller,
+                            default=plan.origin_version,
+                        ),
                     )
                     local_formats = [
                         item for item in spec.outputs.manifest_formats if item in {"json", "text"}
@@ -694,6 +746,10 @@ class WorkflowEngine:
         expected_digest: str,
         idempotency_key: str,
         context: Any = None,
+        validate_artifacts: bool = True,
+        require_owned: bool = True,
+        verify_import_evidence: bool = True,
+        final_qa_worksheet_ref: str | None = None,
     ) -> dict[str, Any]:
         return self.execute(
             spec,
@@ -701,4 +757,8 @@ class WorkflowEngine:
             idempotency_key=idempotency_key,
             context=context,
             _resume=True,
+            validate_artifacts=validate_artifacts,
+            require_owned=require_owned,
+            verify_import_evidence=verify_import_evidence,
+            final_qa_worksheet_ref=final_qa_worksheet_ref,
         )

@@ -110,6 +110,7 @@ def test_readmes_document_the_same_031_balanced_workflow_contract():
         for required in [
             "0.3.0",
             "0.3.1",
+            "0.4.0",
             "origin_run_task",
             "origin_plan_workflow",
             "origin_execute_workflow",
@@ -126,6 +127,7 @@ def test_readmes_document_the_same_031_balanced_workflow_contract():
             "differentiate",
             "CHANGELOG.md",
             "docs/VALIDATION-0.3.1.md",
+            "docs/VALIDATION-0.4.0.md",
         ]:
             assert required in text
         assert "checkpoint_policy=\"auto\"" in text
@@ -136,7 +138,7 @@ def test_changelog_covers_every_public_release():
     changelog = ROOT / "CHANGELOG.md"
     assert changelog.is_file()
     text = _read(changelog)
-    for version in ["0.1.0", "0.2.0", "0.2.1", "0.3.0", "0.3.1"]:
+    for version in ["0.1.0", "0.2.0", "0.2.1", "0.3.0", "0.3.1", "0.4.0"]:
         assert f"## [{version}]" in text
     for heading in ["### Added", "### Changed", "### Safety", "### Validation", "### Known limits"]:
         assert heading in text

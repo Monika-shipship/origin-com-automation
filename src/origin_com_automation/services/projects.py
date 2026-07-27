@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 import shutil
-from hashlib import sha256
 from pathlib import Path
+
+from ..utils.hashing import sha256_file
 
 MIN_PROJECT_SIZE_BYTES = 64
 
@@ -42,8 +43,4 @@ def project_signature(path: str | Path) -> tuple[int, int, str] | None:
     if not artifact.is_file():
         return None
     stat = artifact.stat()
-    digest = sha256()
-    with artifact.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return stat.st_size, stat.st_mtime_ns, digest.hexdigest()
+    return stat.st_size, stat.st_mtime_ns, sha256_file(artifact)

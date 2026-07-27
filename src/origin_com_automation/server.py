@@ -6,7 +6,7 @@ import logging
 import sys
 import base64
 import json
-from copy import deepcopy
+import hashlib
 from collections.abc import Callable
 from pathlib import Path
 from typing import Annotated, Any, Literal
@@ -14,7 +14,7 @@ from typing import Annotated, Any, Literal
 from mcp.server.fastmcp import FastMCP
 from mcp.server.fastmcp.tools import Tool
 from mcp.types import ImageContent, TextContent
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
 from .capabilities import capability_report
 from .com.origin_api import OriginController
@@ -24,266 +24,38 @@ from .graphs.catalog import graph_catalog
 from .graphs.palettes import palette_catalog
 from .graphs.preview import inspect_png
 from .graphs.templates import discover_templates
-from .native.common import FileRef, OutputRef, RangeRef
+from .native.common import OutputRef
+from .mcp.helpers import decode_native_parameter, inline_local_schema_refs
+from .mcp.schemas import (
+    AnalysisFilter,
+    AnalysisOptions,
+    AuditTargetInput,
+    CreatePlotOptions,
+    GraphConfigurationOptions,
+    HexColor,
+    NativeOutputInput,
+    NativeParameterInput,
+    WorksheetTransformOptions,
+)
 from .knowledge import query_knowledge
 from .tools.health import health_check
 from .workflows.executor import execute_figure
 from .workflows.figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
 from .workflows.audit import AuditTarget, run_targeted_audit
+from .workflows.batch import BatchPlanError, build_batch_plan, execute_batch
 from .workflows.engine import WorkflowEngine, WorkflowExecutionError
 from .workflows.manifest import build_workflow_manifest, write_manifest_artifacts
 from .workflows.planner import compile_workflow
 from .workflows.spec import WorkflowSpec, workflow_spec_digest
 from .workflows.tasks import TaskManager
+from .utils.runtime import controller_origin_version
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
 
 
-class StrictOptions(BaseModel):
-    model_config = ConfigDict(extra="forbid")
-
-
-class NativeRangeInput(StrictOptions):
-    type: Literal["range"]
-    value: str
-
-
-class NativeFileInput(StrictOptions):
-    type: Literal["file"]
-    value: str
-
-
-class NativeStringInput(StrictOptions):
-    type: Literal["string"]
-    value: str
-
-
-class NativeNumberInput(StrictOptions):
-    type: Literal["number"]
-    value: float
-
-
-class NativeIntegerInput(StrictOptions):
-    type: Literal["integer"]
-    value: int
-
-
-class NativeBooleanInput(StrictOptions):
-    type: Literal["boolean"]
-    value: bool
-
-
-class NativeOutputInput(StrictOptions):
-    type: Literal["output"] = "output"
-    value: str
-
-
-NativeParameterInput = Annotated[
-    NativeRangeInput
-    | NativeFileInput
-    | NativeStringInput
-    | NativeNumberInput
-    | NativeIntegerInput
-    | NativeBooleanInput,
-    Field(discriminator="type"),
-]
-
-
-def _decode_native_parameter(value: NativeParameterInput) -> Any:
-    if isinstance(value, NativeRangeInput):
-        return RangeRef(value.value)
-    if isinstance(value, NativeFileInput):
-        return FileRef(value.value)
-    return value.value
-
-
-class AnalysisOptions(StrictOptions):
-    backend: Literal["python", "origin_native"] = "origin_native"
-    degree: int | None = None
-    polyorder: int | None = None
-    window: int | None = None
-    order: int | None = None
-    derivative_method: Literal[
-        "gradient", "forward", "backward", "central", "differentiate", "dderivative"
-    ] | None = None
-    edge_order: Literal[1, 2] | None = None
-    prominence: float | None = None
-    distance: float | None = None
-    height: float | None = None
-    model: Literal["exponential", "gaussian"] | None = None
-    initial_guess: list[float] | None = None
-    maxfev: int | None = None
-    bounds: list[list[float]] | None = None
-    parameter_names: list[str] | None = None
-    interpolation_kind: Literal["linear", "nearest", "cubic"] | None = None
-    interpolation_points: list[float] | None = None
-    normalization_method: Literal["min_max", "z_score", "area"] | None = None
-    sample_spacing: Annotated[float, Field(gt=0)] | None = None
-    correlation_method: Literal["pearson", "spearman"] | None = None
-    alternative: Literal["two-sided", "less", "greater"] | None = None
-    population_mean: float | None = None
-    equal_variance: bool | None = None
-    groups: list[list[float]] | None = None
-    components: Annotated[int, Field(ge=1, le=2)] | None = None
-    standardize: bool | None = None
-    create_operation: bool = True
-    recalculate_mode: Literal["none", "auto", "manual"] = "auto"
-
-
-class AnalysisFilter(StrictOptions):
-    column: Literal["x", "y"]
-    operator: Literal["gt", "ge", "lt", "le", "eq", "ne"]
-    value: float
-
-
-class CreatePlotOptions(StrictOptions):
-    template: str | None = None
-
-
-class PlotStyleOptions(StrictOptions):
-    plot_index: Annotated[int, Field(ge=1)] = 1
-    color_index: int | None = None
-    line_connection: str | int | None = None
-
-
-class GraphDataBinding(StrictOptions):
-    worksheet_name: str
-    x_column: str | int
-    y_columns: list[str | int]
-    label_column: str | int | None = None
-    plot_type: Literal["line", "scatter", "line_symbol", "bar"] = "line"
-
-
-HexColor = Annotated[str, Field(pattern=r"^#[0-9A-Fa-f]{6}$")]
-PositiveFloat = Annotated[float, Field(gt=0)]
-
-
-class CategoryMarkerOptions(StrictOptions):
-    color: HexColor | None = None
-    shape: Literal[
-        "circle",
-        "square",
-        "triangle_up",
-        "triangle_down",
-        "diamond",
-        "hexagon",
-        "star",
-        "cross",
-        "x",
-    ] | None = None
-    fill: Literal["solid", "open", "hollow"] | None = None
-    size: PositiveFloat | None = None
-
-
-class CategoricalStyleOptions(StrictOptions):
-    plot_index: Annotated[int, Field(ge=1)] = 1
-    worksheet_name: str | None = None
-    category_column: str | int
-    categories: Annotated[dict[str, CategoryMarkerOptions], Field(min_length=1)]
-
-
-class CategoricalLegendOptions(StrictOptions):
-    mode: Literal["categorical"] = "categorical"
-    source: Literal["plot_style_mapping"] = "plot_style_mapping"
-    plot_index: Annotated[int, Field(ge=1)] = 1
-    position: Literal["top_right"] = "top_right"
-    font_size: PositiveFloat | None = None
-    line_spacing: PositiveFloat | None = None
-    border: bool = False
-    background: Literal["transparent"] = "transparent"
-    replace_existing: bool = True
-    show_all_categories: bool | None = None
-
-
-class GraphConfigurationOptions(StrictOptions):
-    x_min: float | None = None
-    x_max: float | None = None
-    y_min: float | None = None
-    y_max: float | None = None
-    x_tick_step: float | None = None
-    y_tick_step: float | None = None
-    x_scale: Literal["linear", "log10", "ln", "log2"] | None = None
-    y_scale: Literal["linear", "log10", "ln", "log2"] | None = None
-    x_title: str | None = None
-    y_title: str | None = None
-    legend: bool | CategoricalLegendOptions | None = None
-    rescale: bool | None = None
-    plot_styles: list[PlotStyleOptions] | None = None
-    data_binding: GraphDataBinding | None = None
-    categorical_style: CategoricalStyleOptions | None = None
-
-
-class WorksheetTransformOptions(StrictOptions):
-    by: list[str] | None = None
-    ascending: bool | list[bool] | None = None
-    na_position: Literal["first", "last"] | None = None
-    column: str | None = None
-    operator: Literal[
-        "eq", "ne", "gt", "ge", "lt", "le",
-        "add", "subtract", "multiply", "divide", "power",
-    ] | None = None
-    value: Any | None = None
-    subset: list[str] | None = None
-    keep: Literal["first", "last", False] | None = None
-    columns: str | list[str] | None = None
-    strategy: Literal["value", "forward", "backward", "mean", "median", "drop_rows"] | None = None
-    right_rows: list[list[Any]] | None = None
-    right_columns: list[str] | None = None
-    on: list[str] | None = None
-    how: Literal["left", "right", "inner", "outer"] | None = None
-    validation: Literal["one_to_one", "one_to_many", "many_to_one", "many_to_many"] | None = Field(
-        default=None, alias="validate"
-    )
-    other_rows: list[list[Any]] | None = None
-    other_columns: list[str] | None = None
-    axis: Literal[0, 1] | None = None
-    ignore_index: bool | None = None
-    index: list[str] | None = None
-    values: str | None = None
-    aggregation: Literal["mean", "sum", "min", "max", "count", "median"] | None = None
-    id_vars: list[str] | None = None
-    value_vars: list[str] | None = None
-    variable_name: str | None = None
-    value_name: str | None = None
-    name: str | None = None
-    left: str | None = None
-    right: str | None = None
-    execution_mode: Literal["origin_native", "materialized"] = "origin_native"
-    before_script: str = ""
-    row_start: Annotated[int, Field(ge=0)] = 0
-    row_end: Annotated[int, Field(ge=-1)] = -1
-    recalculate_mode: Literal["none", "auto", "manual"] = "auto"
-
-
-class AuditTargetInput(StrictOptions):
-    kind: Literal["worksheet", "connector", "formula", "operation", "graph", "file", "shutdown"]
-    ref: str
-    expected: dict[str, Any] = Field(default_factory=dict)
-
-
-def _inline_local_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
-    definitions = schema.get("$defs", {})
-
-    def expand(value: Any, stack: tuple[str, ...] = ()) -> Any:
-        if isinstance(value, list):
-            return [expand(item, stack) for item in value]
-        if not isinstance(value, dict):
-            return value
-        ref = value.get("$ref")
-        if isinstance(ref, str) and ref.startswith("#/$defs/"):
-            name = ref.rsplit("/", 1)[-1]
-            if name not in stack and name in definitions:
-                replacement = deepcopy(definitions[name])
-                replacement.update({key: item for key, item in value.items() if key != "$ref"})
-                return expand(replacement, (*stack, name))
-        return {
-            key: expand(item, stack)
-            for key, item in value.items()
-            if key != "$defs"
-        }
-
-    return expand(schema)
+_decode_native_parameter = decode_native_parameter
+_inline_local_schema_refs = inline_local_schema_refs
 
 
 def create_server(
@@ -365,7 +137,7 @@ def create_server(
     ) -> ResultEnvelope:
         """Report verified, supported-unverified, and unsupported Origin capabilities."""
 
-        origin_version = getattr(active_controller(), "origin_version", None)
+        origin_version = controller_origin_version(active_controller())
         return ResultEnvelope.ok(
             {
                 "origin_version": origin_version,
@@ -891,9 +663,7 @@ def create_server(
     def origin_plan_figure(spec: FigureSpec) -> ResultEnvelope:
         """Preflight a declarative figure route and return its immutable execution digest."""
         controller = active_controller()
-        version = getattr(controller, "origin_version", None) or getattr(
-            controller, "_origin_version", None
-        )
+        version = controller_origin_version(controller)
         return ResultEnvelope.ok(
             compile_figure_spec(spec, origin_version=version),
             origin_version=version,
@@ -910,9 +680,7 @@ def create_server(
                 data={"expected_digest": plan_digest, "actual_digest": actual_digest},
             )
         controller = active_controller()
-        version = getattr(controller, "origin_version", None) or getattr(
-            controller, "_origin_version", None
-        )
+        version = controller_origin_version(controller)
         plan = compile_figure_spec(spec, origin_version=version)
         if not plan["executor_executable"]:
             return ResultEnvelope.fail(
@@ -942,9 +710,7 @@ def create_server(
     @strict_tool(name="origin_plan_workflow")
     def origin_plan_workflow(spec: WorkflowSpec) -> ResultEnvelope:
         """Compile one complete offline plan and return every missing scientific decision together."""
-        version = getattr(active_controller(), "origin_version", None) or getattr(
-            active_controller(), "_origin_version", None
-        )
+        version = controller_origin_version(active_controller())
         try:
             plan = workflow_engine.plan(spec, origin_version=version)
         except Exception as exc:
@@ -1077,9 +843,7 @@ def create_server(
                 "WorkflowSpec no longer matches the approved plan digest",
                 data={"expected_digest": plan_digest, "actual_digest": actual_digest},
             )
-        version = getattr(active_controller(), "origin_version", None) or getattr(
-            active_controller(), "_origin_version", None
-        )
+        version = controller_origin_version(active_controller())
         plan = compile_workflow(spec, origin_version=version)
         if not plan.executor_executable:
             return ResultEnvelope.fail(
@@ -1182,9 +946,7 @@ def create_server(
             return ResultEnvelope.fail("WORKFLOW_LEDGER_INVALID", str(exc))
         if ledger.get("digest") != plan_digest:
             return ResultEnvelope.fail("WORKFLOW_LEDGER_CHANGED", "Ledger digest does not match the approved plan")
-        version = getattr(active_controller(), "origin_version", None) or getattr(
-            active_controller(), "_origin_version", None
-        )
+        version = controller_origin_version(active_controller())
         plan = compile_workflow(spec, origin_version=version)
         from . import __version__
 
@@ -1229,7 +991,7 @@ def create_server(
                     "BATCH_PLAN_CHANGED",
                     f"Batch FigureSpec {index} does not match its approved digest",
                 )
-            version = getattr(active_controller(), "_origin_version", None)
+            version = controller_origin_version(active_controller())
             plan = compile_figure_spec(spec, origin_version=version)
             if not plan["executor_executable"]:
                 return ResultEnvelope.fail(
@@ -1238,25 +1000,42 @@ def create_server(
                     data={"index": index, "plan": plan},
                 )
 
+        try:
+            batch_key = hashlib.sha256(
+                "|".join(plan_digests).encode("utf-8")
+            ).hexdigest()[:12]
+            batch_root = (
+                Path(specs[0].outputs.project_path).expanduser().resolve().parent
+                / ".origin-com-automation"
+                / f"batch-{batch_key}"
+            )
+            batch_plan = build_batch_plan(
+                files=[spec.input.path for spec in specs],
+                output_root=str(batch_root),
+            )
+        except (BatchPlanError, OSError) as exc:
+            return ResultEnvelope.fail("BATCH_PLAN_INVALID", str(exc))
+
         def execute_serial(context):
-            results = []
-            for index, (spec, digest) in enumerate(zip(specs, plan_digests, strict=True)):
+            def execute_item(item):
+                index = item.index - 1
                 result = execute_figure(
                     active_controller(),
-                    spec,
-                    expected_digest=digest,
+                    specs[index],
+                    expected_digest=plan_digests[index],
                     context=context,
                 )
-                results.append({"index": index, "result": result})
-                if not result.get("success", False) and on_error == "stop":
-                    break
-            return {
-                "success": all(item["result"].get("success", False) for item in results),
-                "total": len(specs),
-                "completed": len(results),
-                "stopped_early": len(results) < len(specs),
-                "results": results,
-            }
+                return {"index": index, "result": result}
+
+            result = execute_batch(
+                batch_plan,
+                execute_item,
+                fail_fast=on_error == "stop",
+            )
+            result["success"] = all(
+                item["result"].get("success", False) for item in result["results"]
+            )
+            return result
 
         task_id = workflow_tasks.submit("batch", execute_serial)
         return ResultEnvelope.ok(
@@ -1273,7 +1052,7 @@ def create_server(
     def origin_task_status(task_id: str) -> ResultEnvelope:
         """Read queued/running/terminal workflow state and completed stages."""
         try:
-            return ResultEnvelope.ok(workflow_tasks.status(task_id))
+            return ResultEnvelope.ok(workflow_tasks.read_status(task_id))
         except KeyError:
             return ResultEnvelope.fail("TASK_NOT_FOUND", f"Workflow task not found: {task_id}")
 

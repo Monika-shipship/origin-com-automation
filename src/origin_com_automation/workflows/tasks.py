@@ -251,6 +251,11 @@ class TaskManager:
                 if key != "future"
             } | {"completed_stages": completed}
 
+    def read_status(self, task_id: str) -> dict[str, Any]:
+        """Canonical status read used by every public task and workflow tool."""
+
+        return self.status(task_id)
+
     def cancel(self, task_id: str) -> dict[str, Any]:
         with self._lock:
             record = self._tasks[task_id]

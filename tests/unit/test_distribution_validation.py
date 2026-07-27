@@ -10,6 +10,24 @@ def test_repository_plugin_and_skill_distribution_is_valid():
     assert validate_plugin(root) == []
 
 
+def test_mcp_uses_external_versioned_non_editable_runtime():
+    root = Path(__file__).resolve().parents[2]
+    mcp = json.loads((root / ".mcp.json").read_text(encoding="utf-8"))
+    server = mcp["mcpServers"]["origin-com-automation"]
+
+    assert server["command"].lower() in {"powershell", "powershell.exe"}
+    assert any("run_mcp.ps1" in str(item) for item in server["args"])
+    bootstrap = (root / "scripts" / "bootstrap.ps1").read_text(encoding="utf-8").lower()
+    launcher = (root / "scripts" / "run_mcp.ps1").read_text(encoding="utf-8").lower()
+    runtime_path = (root / "scripts" / "runtime_path.ps1").read_text(encoding="utf-8").lower()
+    assert "localappdata" in runtime_path
+    assert "runtime" in runtime_path
+    assert "pip install -e" not in bootstrap
+    assert "pip install -e" not in launcher
+    assert "runtime_path.ps1" in launcher
+    assert "version" in runtime_path
+
+
 def test_skill_validation_rejects_unknown_frontmatter(tmp_path: Path):
     skill = tmp_path / "example"
     skill.mkdir()

@@ -33,8 +33,8 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 
 版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)、
 [0.2.1 验证报告](docs/VALIDATION-0.2.1.md)和当前候选版的
-[0.3.0 验证报告](docs/VALIDATION-0.3.0.md)和
-[0.3.1 验证报告](docs/VALIDATION-0.3.1.md)。每版变化见[完整版本历史](CHANGELOG.md)。
+[0.3.0 验证报告](docs/VALIDATION-0.3.0.md)、[0.3.1 验证报告](docs/VALIDATION-0.3.1.md)以及当前的
+[0.4.0 验证报告](docs/VALIDATION-0.4.0.md)。每版变化见[完整版本历史](CHANGELOG.md)。
 
 <!-- section:requirements -->
 ## 运行环境
@@ -49,7 +49,9 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 其他 Origin 版本可能可以运行，但涉及特定 X-Function、模板、图形或分析操作时，在完成对应版本
 的真实回读验证以前，只能标记为“支持但未验证”。
 
-安装脚本会在插件目录中创建独立的 `.venv`，不会把依赖安装到系统 Python。主要依赖包括
+安装脚本会在开发目录中创建独立的 `.venv`，但 MCP 启动器不会从源码目录直接导入。它会在
+`%LOCALAPPDATA%\OriginComAutomation\runtime\<插件版本>` 创建版本化、非 editable 的运行时，确保
+已安装代码和插件元数据一致。主要依赖包括
 pywin32、MCP、Pydantic、NumPy/SciPy、OpenPyXL、Pillow、psutil、pandas 和 xlrd。
 
 <!-- section:setup -->
@@ -62,7 +64,7 @@ pywin32、MCP、Pydantic、NumPy/SciPy、OpenPyXL、Pillow、psutil、pandas 和
 & '.\scripts\diagnose.ps1'
 ```
 
-`.mcp.json` 使用相对路径调用插件目录中的 Python，因此源代码目录和 `.venv` 可以整体移动。
+`.mcp.json` 调用 `scripts/run_mcp.ps1`，启动器会解析缓存插件根目录，并在第一次使用时准备外部运行时。
 然后把插件安装或更新到个人 Codex marketplace：
 
 ```powershell
@@ -91,7 +93,7 @@ codex plugin add origin-com-automation@personal
 保持图形直接绑定原表，另存为 device-reviewed.opju 并导出。不要覆盖原项目。
 ```
 
-对于完整的新数据、分析或绘图任务，`0.3.1` 默认使用一次高层调用：
+对于完整的新数据、分析或绘图任务，`0.4.0` 保留 `0.3.1` 的一次高层调用路径：
 
 1. 把完整 `WorkflowSpec` 交给 `origin_run_task`；
 2. 如果返回 `needs_input`，一次性回答全部 `required_decisions`，再调用一次；
@@ -312,7 +314,7 @@ COM 方法不报错只能说明调用返回，不能证明结果正确。导入�
 <!-- section:figurespec-batch -->
 ## FigureSpec、批量任务与图形
 
-`WorkflowSpec` 是 `0.3.0` 引入的高层契约，`0.3.1` 增加了直接一次调用路线。它把数据源、数据参数、科学参数、公式、原生分析、
+`WorkflowSpec` 是首选的声明式契约；`0.4.0` 将 FigureSpec 兼容接口、任务状态、批处理、图形目录、MCP Schema、COM 辅助层和共享工具统一到同一执行内核。它把数据源、数据参数、科学参数、公式、原生分析、
 绘图、输出、QA 和执行策略明确分开。`origin_run_task`、`origin_plan_workflow`、
 `origin_execute_workflow`、`origin_workflow_status`、`origin_resume_workflow`、
 `origin_audit_result` 和 `origin_export_manifest` 最终仍调用同一套底层 Controller，
@@ -471,3 +473,4 @@ LICENSE 文件为准。
 - [Origin COM Automation 0.2.1 验证报告](docs/VALIDATION-0.2.1.md)
 - [Origin COM Automation 0.3.0 验证报告](docs/VALIDATION-0.3.0.md)
 - [Origin COM Automation 0.3.1 验证报告](docs/VALIDATION-0.3.1.md)
+- [Origin COM Automation 0.4.0 验证报告](docs/VALIDATION-0.4.0.md)

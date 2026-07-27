@@ -5,6 +5,10 @@ description: Use when Codex needs to inspect or control OriginLab on Windows thr
 
 # Origin Automation
 
+This Skill describes the `0.4.0` consolidated runtime. FigureSpec, WorkflowSpec, batch, graph,
+MCP-schema, and COM-support compatibility routes share one execution kernel; do not invent a
+temporary Python runner when a corresponding MCP tool exists.
+
 Use the MCP tools as the deterministic control surface. Resolve objects by returned names/refs,
 preserve the user's scientific choices, and finish through the shortest route that still verifies
 the requested result. Prefer one synchronous `origin_run_task` call for a clear end-to-end task;
@@ -77,6 +81,10 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - Maximum one health check, one start, one project open, and one initial object audit per task.
 - Maximum one write/import plus one readback per logical data block; never write or verify cell by cell.
 - Maximum one final configuration call and one normal export/save attempt per requested graph or artifact.
+
+The launcher uses a versioned external runtime under `%LOCALAPPDATA%\OriginComAutomation\runtime\<version>`;
+do not assume that the development `.venv` is the MCP interpreter. If the runtime is missing, let
+the launcher bootstrap it once rather than installing an editable package into the plugin cache.
 - Reuse returned refs and prior successful responses. Do not repeat successful calls for reassurance.
 - Merge adjacent ranges and pass multiple Y columns together when the tool supports it.
 - The optional second object audit is reserved for changed structure/bindings or one lookup recovery.

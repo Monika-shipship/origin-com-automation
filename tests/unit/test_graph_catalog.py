@@ -24,9 +24,15 @@ def test_graph_request_rejects_missing_or_extra_roles():
         validate_graph_request("scatter", {"x": "A", "y": "B", "z": "C"})
 
 
+def test_typed_graph_routes_are_registered_once_in_the_catalog():
+    catalog = graph_catalog()
+    assert {"semilog", "loglog", "multi_layer"} <= set(catalog)
+    assert catalog["semilog"]["plot_id"] == catalog["line"]["plot_id"]
+    assert catalog["multi_layer"]["plot_id"] == catalog["line_symbol"]["plot_id"]
+
+
 def test_palette_catalog_has_stable_ids_and_exact_hex_colors():
     palettes = palette_catalog()
     assert "scientific_default" in palettes
     assert palettes["colorblind_safe"]["colors"][0].startswith("#")
     assert all(len(color) == 7 for item in palettes.values() for color in item["colors"])
-

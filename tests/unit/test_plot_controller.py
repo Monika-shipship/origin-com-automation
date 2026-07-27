@@ -1,4 +1,5 @@
 from origin_com_automation.com.origin_api import OriginController
+from origin_com_automation.services.graphs import build_graph_spec
 
 
 class InlineWorker:
@@ -149,6 +150,12 @@ def test_multi_layer_plot_creates_one_layer_per_y_column():
     assert len(app.page.Layers.items) == 2
     assert app.page.Layers.items[0].DataPlots.added[0][0].ranges == [("X", 0), ("Y", 1)]
     assert app.page.Layers.items[1].DataPlots.added[0][0].ranges == [("X", 0), ("Y", 2)]
+
+
+def test_graph_spec_and_controller_share_catalog_graph_routes():
+    assert build_graph_spec(graph_type="semilog", x_column="A", y_columns=["B"]).graph_type == "semilog"
+    assert build_graph_spec(graph_type="loglog", x_column="A", y_columns=["B"]).graph_type == "loglog"
+    assert build_graph_spec(graph_type="multi_layer", x_column="A", y_columns=["B", "C"]).graph_type == "multi_layer"
 
 
 def test_loglog_plot_uses_origin_2024_log10_axis_values():

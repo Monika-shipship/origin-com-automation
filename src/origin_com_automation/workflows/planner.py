@@ -11,6 +11,7 @@ from typing import Any
 from ..capabilities import capability_report
 from ..data_inspection import DataInspectionError, inspect_data_source
 from ..graphs.catalog import graph_catalog
+from ..utils.hashing import sha256_file
 from .spec import WorkflowSpec, workflow_spec_digest
 
 
@@ -129,6 +130,9 @@ def _idempotency_key(digest: str, stage_id: str, target: str | None) -> str:
     return hashlib.sha256(payload).hexdigest()
 
 
+_file_sha256 = sha256_file
+
+
 def _stage(
     digest: str,
     stage_id: str,
@@ -161,6 +165,43 @@ def compile_workflow(
     expected_objects: list[dict[str, Any]] = []
 
     for source in spec.sources:
+        source_path = Path(source.path).expanduser().resolve()
+        if source.import_mode == "project":
+            if not source_path.is_file():
+                blockers.append(
+                    {
+                        "code": "PROJECT_INPUT_NOT_FOUND",
+                        "source_id": source.id,
+                        "path": str(source_path),
+                    }
+                )
+                continue
+            if source_path.suffix.lower() != ".opju":
+                blockers.append(
+                    {
+                        "code": "PROJECT_INPUT_EXTENSION_INVALID",
+                        "source_id": source.id,
+                        "path": str(source_path),
+                    }
+                )
+            previews.append(
+                {
+                    "source_id": source.id,
+                    "source_sha256": _file_sha256(source_path),
+                    "path": str(source_path),
+                    "rows": None,
+                    "columns": None,
+                    "ambiguities": [],
+                }
+            )
+            expected_objects.append(
+                {
+                    "logical_id": f"project:source:{source.id}",
+                    "kind": "project",
+                    "path": str(source_path),
+                }
+            )
+            continue
         try:
             preview = inspect_data_source(
                 source.path,

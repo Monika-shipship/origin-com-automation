@@ -32,6 +32,14 @@ def test_task_manager_reports_monotonic_stages_and_success():
     manager.shutdown()
 
 
+def test_read_status_is_the_canonical_status_api():
+    manager = TaskManager(max_results=10)
+    task_id = manager.submit("status", lambda context: {"ok": True})
+    wait_terminal(manager, task_id)
+    assert manager.read_status(task_id) == manager.status(task_id)
+    manager.shutdown()
+
+
 def test_pending_task_can_cancel_but_running_mutation_cannot():
     manager = TaskManager(max_results=10)
     release = threading.Event()

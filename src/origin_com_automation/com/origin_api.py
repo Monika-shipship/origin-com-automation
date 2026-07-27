@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import inspect
 import json
 import logging
@@ -55,7 +54,7 @@ from ..objects.worksheets import (
     transform_table,
 )
 from ..objects.project import ProjectObjectError, build_folder_plan, build_note_plan
-from ..graphs.catalog import GraphCatalogError, validate_graph_request
+from ..graphs.catalog import GraphCatalogError, graph_catalog, validate_graph_request
 from ..graphs.layout import GraphLayoutError, build_layout_plan
 from ..graphs.preview import inspect_png
 from ..graphs.templates import GraphTemplateError, apply_template_plan
@@ -75,7 +74,35 @@ from ..services.projects import (
     validate_project_artifact,
 )
 from ..services.worksheets import table_from_com_value
+from ..utils.hashing import sha256_file
 from .discovery import discover_registrations, executable_version
+from .graph_support import (
+    CATEGORY_FILLS,
+    CATEGORY_SHAPES,
+    DATA_BINDING_PLOT_TYPES,
+    SCALE_TYPES,
+    graph_configuration_commands as _graph_configuration_commands,
+    graph_page_name as _graph_page_name,
+    normalize_categorical_legend as _normalize_categorical_legend,
+    normalize_categorical_style as _normalize_categorical_style,
+    normalize_graph_data_binding as _normalize_graph_data_binding,
+    resolve_graph_layer as _resolve_graph_layer,
+)
+from .project_support import (
+    collection_items as _collection_items,
+    ensure_root_folder as _ensure_root_folder,
+    file_identity as _file_identity,
+    find_collection_item as _find_collection_item,
+    labtalk_quote as _labtalk_quote,
+    project_path_parts as _project_path_parts,
+    required_attr as _required_attr,
+    required_collection_items as _required_collection_items,
+    resolve_root_folder as _resolve_root_folder,
+    safe_attr as _safe_attr,
+    safe_call as _safe_call,
+    same_file_path as _same_file_path,
+    same_origin_object as _same_origin_object,
+)
 from .errors import (
     AnalysisExecutionError,
     LabTalkExecutionError,
@@ -89,6 +116,20 @@ from .errors import (
 )
 from .session import SessionManager
 from .worker import SerialComWorker
+from .worksheet_support import (
+    ORIGIN_DATA_FORMAT_TEXT,
+    ORIGIN_DATA_FORMAT_TEXT_NUMERIC,
+    cells_equal as _cells_equal,
+    coerce_delimited_cell as _coerce_delimited_cell,
+    column_data_format as _column_data_format,
+    column_profile as _column_profile,
+    is_missing_cell as _is_missing_cell,
+    matrix_mismatches as _matrix_mismatches,
+    normalize_cell as _normalize_cell,
+    rectangular_values as _rectangular_values,
+    split_header as _split_header,
+    worksheet_reference as _worksheet_reference,
+)
 
 ORIGIN_PAGE_WORKSHEET = 2
 ORIGIN_PAGE_GRAPH = 3
@@ -101,31 +142,9 @@ ORIGIN_ARRAY2D_VARIANT = 0
 ORIGIN_ARRAY1D_STR = 8
 ORIGIN_ARRAY2D_NUMERIC = 2
 ORIGIN_ARRAY2D_TEXT_FULL_PRECISION = 4
-ORIGIN_DATA_FORMAT_NUMERIC = 0
-ORIGIN_DATA_FORMAT_TEXT = 1
-ORIGIN_DATA_FORMAT_TEXT_NUMERIC = 9
-ORIGIN_MISSING_VALUE = -1.23456789e-300
 
 logger = logging.getLogger(__name__)
 
-GRAPH_OPTION_KEYS = {
-    "x_min",
-    "x_max",
-    "y_min",
-    "y_max",
-    "x_tick_step",
-    "y_tick_step",
-    "x_scale",
-    "y_scale",
-    "x_title",
-    "y_title",
-    "legend",
-    "rescale",
-    "plot_styles",
-    "data_binding",
-    "categorical_style",
-}
-SCALE_TYPES = {"linear": 0, "log10": 2, "ln": 8, "log2": 9}
 WORKSHEET_DATA_FORMATS = {
     "auto": ORIGIN_ARRAY2D_VARIANT,
     "numeric": ORIGIN_ARRAY2D_NUMERIC,
@@ -136,37 +155,6 @@ SINGLE_INSTANCE_PROGIDS = {"Origin.ApplicationSI", "Origin.ApplicationCOMSI"}
 OWNED_INSTANCE_PROGID = "Origin.Application"
 ORIGIN_DISABLE_SAVE_PROMPT_SCRIPT = "doc -s;"
 ORIGIN_DELAYED_EXIT_SCRIPT = "def timerproc { exit; } timer 1;"
-LINE_CONNECTIONS = {
-    "none": 0,
-    "straight": 1,
-    "two_point_segment": 2,
-    "three_point_segment": 3,
-    "b_spline": 8,
-    "spline": 9,
-    "step_horizontal": 11,
-    "step_vertical": 12,
-    "step_horizontal_center": 13,
-    "step_vertical_center": 14,
-    "bezier": 15,
-}
-DATA_BINDING_PLOT_TYPES = {
-    "line": ORIGIN_PLOT_LINE,
-    "scatter": ORIGIN_PLOT_SCATTER,
-    "line_symbol": ORIGIN_PLOT_LINESYMB,
-    "bar": ORIGIN_PLOT_COLUMN,
-}
-CATEGORY_SHAPES = {
-    "square": 1,
-    "circle": 2,
-    "triangle_up": 3,
-    "triangle_down": 4,
-    "diamond": 5,
-    "hexagon": 6,
-    "star": 7,
-    "cross": 8,
-    "x": 9,
-}
-CATEGORY_FILLS = {"solid": 0, "open": 1, "hollow": 3}
 ORIGIN_PLOT_DESIGNATION_Y = 0
 ORIGIN_PLOT_DESIGNATION_X = 3
 ORIGIN_PLOT_DESIGNATION_LABEL = 4
@@ -229,24 +217,6 @@ def _default_process_snapshot() -> set[int]:
             return set()
 
 
-def _safe_attr(obj: Any, name: str, default: Any = None) -> Any:
-    try:
-        value = getattr(obj, name)
-        return value() if callable(value) and name in {"Count"} else value
-    except Exception:
-        return default
-
-
-def _safe_call(obj: Any, name: str, *args: Any, default: Any = None) -> Any:
-    try:
-        method = getattr(obj, name)
-        if not callable(method):
-            return default
-        return method(*args)
-    except Exception:
-        return default
-
-
 def _flush_auto_recalculation(app: Any) -> bool | None:
     """Run Origin's pending auto-update queue after an input mutation."""
 
@@ -255,49 +225,6 @@ def _flush_auto_recalculation(app: Any) -> bool | None:
         return None
     result = execute("run -p au;")
     return not (result is False or result == 0)
-
-
-def _collection_items(collection: Any) -> list[Any]:
-    if collection is None:
-        return []
-    count = _safe_attr(collection, "Count")
-    if count is not None:
-        items: list[Any] = []
-        for index in range(int(count)):
-            try:
-                item = collection.Item(index)
-            except Exception:
-                try:
-                    item = collection(index)
-                except Exception:
-                    continue
-            if item is not None:
-                items.append(item)
-        return items
-    try:
-        return list(collection)
-    except Exception:
-        return []
-
-
-def _find_collection_item(collection: Any, reference: str) -> Any | None:
-    if collection is None:
-        return None
-    try:
-        item = collection.Item(reference)
-        if item is not None:
-            return item
-    except Exception:
-        pass
-    normalized = reference.strip().casefold()
-    for item in _collection_items(collection):
-        names = {
-            str(_safe_attr(item, "Name", "")).strip().casefold(),
-            str(_safe_attr(item, "LongName", "")).strip().casefold(),
-        }
-        if normalized in names:
-            return item
-    return None
 
 
 def _page_numeric_property(page: Any, name: str) -> float | None:
@@ -342,92 +269,6 @@ def _normalize_matrix_object_table(
     return [[_normalize_cell(cell) for cell in row] for row in table]
 
 
-def _project_path_parts(path: str) -> list[str]:
-    return [part for part in path.replace("\\", "/").split("/") if part]
-
-
-def _resolve_root_folder(root: Any, path: str) -> Any | None:
-    current = root
-    for part in _project_path_parts(path):
-        current = _find_collection_item(_safe_attr(current, "Folders"), part)
-        if current is None:
-            return None
-    return current
-
-
-def _ensure_root_folder(root: Any, path: str) -> Any | None:
-    current = root
-    for part in _project_path_parts(path):
-        folders = _safe_attr(current, "Folders")
-        child = _find_collection_item(folders, part)
-        if child is None:
-            child = _safe_call(folders, "Add", part, default=None)
-        if child is None:
-            return None
-        current = child
-    return current
-
-
-def _same_origin_object(left: Any, right: Any) -> bool:
-    if left is right:
-        return True
-    try:
-        return bool(left == right)
-    except Exception:
-        return False
-
-
-def _required_attr(obj: Any, name: str, default: Any = None) -> Any:
-    try:
-        value = getattr(obj, name)
-    except AttributeError:
-        return default
-    return value() if callable(value) and name == "Count" else value
-
-
-def _required_collection_items(collection: Any) -> list[Any]:
-    if collection is None:
-        return []
-    count = _required_attr(collection, "Count")
-    if count is None:
-        return list(collection)
-    try:
-        item_method = getattr(collection, "Item")
-    except AttributeError:
-        item_method = None
-    items: list[Any] = []
-    for index in range(int(count)):
-        if callable(item_method):
-            item = item_method(index)
-        elif callable(collection):
-            item = collection(index)
-        else:
-            raise TypeError("Origin COM collection exposes Count but no Item accessor")
-        if item is not None:
-            items.append(item)
-    return items
-
-
-def _labtalk_quote(value: str | Path) -> str:
-    text = str(value).replace("\\", "/").replace('"', '\\"')
-    return f'"{text}"'
-
-
-def _same_file_path(left: Path, right: Path) -> bool:
-    try:
-        return os.path.samefile(left, right)
-    except OSError:
-        return left.resolve() == right.resolve()
-
-
-def _file_identity(path: Path) -> tuple[int, int] | None:
-    try:
-        stat = path.stat()
-    except OSError:
-        return None
-    return int(stat.st_dev), int(stat.st_ino)
-
-
 def _is_optional_com_argument_error(exc: Exception) -> bool:
     hresult = getattr(exc, "hresult", None)
     if hresult is None and exc.args and isinstance(exc.args[0], int):
@@ -449,22 +290,6 @@ def _column_string_values(column: Any, r1: int, r2: int) -> list[Any]:
     if isinstance(value, (list, tuple)):
         return list(value)
     return [value]
-
-
-def _is_missing_cell(value: Any) -> bool:
-    if value is None:
-        return True
-    if isinstance(value, str):
-        return value == ""
-    if isinstance(value, float):
-        if math.isnan(value):
-            return True
-        return math.isclose(value, ORIGIN_MISSING_VALUE, rel_tol=0.0, abs_tol=1e-315)
-    return False
-
-
-def _normalize_cell(value: Any) -> Any:
-    return None if _is_missing_cell(value) else value
 
 
 def _column_variant_values(column: Any, r1: int, r2: int) -> list[Any]:
@@ -489,32 +314,6 @@ def _column_variant_values(column: Any, r1: int, r2: int) -> list[Any]:
     return [_normalize_cell(raw)]
 
 
-def _column_profile(values: Iterable[Any]) -> dict[str, int]:
-    normalized = [_normalize_cell(value) for value in values]
-    numeric_count = sum(
-        isinstance(value, (int, float)) and not isinstance(value, bool)
-        for value in normalized
-        if value is not None
-    )
-    text_count = sum(isinstance(value, str) for value in normalized if value is not None)
-    non_empty_count = sum(value is not None for value in normalized)
-    return {
-        "non_empty_count": non_empty_count,
-        "numeric_count": numeric_count,
-        "text_count": text_count,
-        "missing_count": len(normalized) - non_empty_count,
-    }
-
-
-def _column_data_format(values: Iterable[Any]) -> int:
-    profile = _column_profile(values)
-    if profile["text_count"] and profile["numeric_count"]:
-        return ORIGIN_DATA_FORMAT_TEXT_NUMERIC
-    if profile["text_count"]:
-        return ORIGIN_DATA_FORMAT_TEXT
-    return ORIGIN_DATA_FORMAT_NUMERIC
-
-
 def _set_column_data_format(column: Any, values: list[Any], *, force: bool) -> int | None:
     requested = _column_data_format(values)
     current = _safe_attr(column, "DataFormat")
@@ -533,26 +332,6 @@ def _set_column_data_format(column: Any, values: list[Any], *, force: bool) -> i
                 pass
         return requested
     return int(current) if current is not None else None
-
-
-def _rectangular_values(values: list[list[Any]]) -> tuple[list[list[Any]], int]:
-    width = max((len(row) for row in values), default=0)
-    return [list(row) + [None] * (width - len(row)) for row in values], width
-
-
-def _cells_equal(expected: Any, actual: Any) -> bool:
-    expected = _normalize_cell(expected)
-    actual = _normalize_cell(actual)
-    if expected is None or actual is None:
-        return expected is actual
-    if (
-        isinstance(expected, (int, float))
-        and not isinstance(expected, bool)
-        and isinstance(actual, (int, float))
-        and not isinstance(actual, bool)
-    ):
-        return math.isclose(float(expected), float(actual), rel_tol=1e-12, abs_tol=1e-12)
-    return str(expected) == str(actual)
 
 
 def _readback_matrix(
@@ -588,31 +367,6 @@ def _read_column_values(column: Any, *, row_start: int, row_end: int) -> list[An
     raw_values = column.GetData(ORIGIN_ARRAY2D_VARIANT, row_start, row_end)
     rows = table_from_com_value(raw_values)
     return [_normalize_cell(row[0]) if row else None for row in rows]
-
-
-def _matrix_mismatches(
-    expected: list[list[Any]], actual: list[list[Any]], *, limit: int = 10
-) -> list[dict[str, Any]]:
-    mismatches: list[dict[str, Any]] = []
-    for row_index, row in enumerate(expected):
-        for column_index, expected_value in enumerate(row):
-            actual_value = (
-                actual[row_index][column_index]
-                if row_index < len(actual) and column_index < len(actual[row_index])
-                else None
-            )
-            if not _cells_equal(expected_value, actual_value):
-                mismatches.append(
-                    {
-                        "row_offset": row_index,
-                        "column_offset": column_index,
-                        "expected": expected_value,
-                        "actual": actual_value,
-                    }
-                )
-                if len(mismatches) >= limit:
-                    return mismatches
-    return mismatches
 
 
 def _system_worksheet_template(app: Any) -> tuple[str, bool]:
@@ -842,281 +596,12 @@ def _worksheet_column(sheet: Any, column: str | int) -> Any:
     raise LookupError(f"Origin worksheet column was not found: {column}")
 
 
-def _worksheet_reference(identifier: str) -> str:
-    if identifier.startswith("worksheet_page:"):
-        parts = identifier.split(":", 2)
-        if len(parts) == 3:
-            return f"[{parts[1]}]{parts[2]}"
-    return identifier
-
-
 def _resolve_worksheet(app: Any, identifier: str) -> Any:
     reference = _worksheet_reference(identifier)
     sheet = app.FindWorksheet(reference)
     if sheet is None:
         raise LookupError(f"Origin worksheet not found: {identifier}")
     return sheet
-
-
-def _graph_reference(app: Any, identifier: str) -> str:
-    if not identifier.startswith("graph_page:"):
-        return identifier
-    parts = identifier.split(":", 2)
-    if len(parts) == 2:
-        return parts[1]
-    page_name, layer_name = parts[1], parts[2]
-    match = re.search(r"(\d+)$", layer_name)
-    if match:
-        return f"[{page_name}]{int(match.group(1))}"
-    try:
-        page = app.GraphPages.Item(page_name)
-        for position, layer in enumerate(_collection_items(_safe_attr(page, "Layers")), start=1):
-            if str(_safe_attr(layer, "Name", "")) == layer_name:
-                return f"[{page_name}]{position}"
-    except Exception:
-        pass
-    return identifier
-
-
-def _graph_page_name(identifier: str) -> str:
-    if identifier.startswith("[") and "]" in identifier:
-        return identifier[1:].split("]", 1)[0]
-    if identifier.startswith("graph_page:"):
-        return identifier.split(":", 2)[1]
-    return identifier
-
-
-def _resolve_graph_layer(app: Any, identifier: str) -> Any:
-    reference = _graph_reference(app, identifier)
-    layer = app.FindGraphLayer(reference)
-    if layer is None:
-        raise LookupError(f"Origin graph layer not found: {identifier}")
-    return layer
-
-
-def _graph_configuration_commands(options: Mapping[str, Any], labtalk: str | None) -> list[str]:
-    unknown = sorted(set(options) - GRAPH_OPTION_KEYS)
-    if unknown:
-        raise ValueError(f"Unsupported graph options: {', '.join(unknown)}")
-    commands: list[str] = []
-    for axis in ("x", "y"):
-        if f"{axis}_min" in options:
-            commands.append(f"layer.{axis}.from={float(options[f'{axis}_min'])};")
-        if f"{axis}_max" in options:
-            commands.append(f"layer.{axis}.to={float(options[f'{axis}_max'])};")
-        if f"{axis}_tick_step" in options:
-            step = float(options[f"{axis}_tick_step"])
-            if step <= 0:
-                raise ValueError(f"{axis}_tick_step must be positive")
-            commands.append(f"layer.{axis}.inc={step};")
-        if f"{axis}_scale" in options:
-            scale = str(options[f"{axis}_scale"]).lower()
-            if scale not in SCALE_TYPES:
-                raise ValueError(f"{axis}_scale must be linear, log10, ln, or log2")
-            commands.append(f"layer.{axis}.type={SCALE_TYPES[scale]};")
-        if f"{axis}_title" in options:
-            flag = "xb" if axis == "x" else "yl"
-            commands.append(f"label -{flag} {_labtalk_quote(str(options[f'{axis}_title']))};")
-    if options.get("rescale"):
-        commands.append("rescale;")
-    if options.get("legend") is True:
-        commands.append("legend;")
-    elif options.get("legend") is False:
-        commands.append("legend -d;")
-    styles = options.get("plot_styles", [])
-    if not isinstance(styles, list):
-        raise ValueError("plot_styles must be a list")
-    for style in styles:
-        if not isinstance(style, Mapping):
-            raise ValueError("Each plot_styles entry must be an object")
-        unknown_style = sorted(set(style) - {"plot_index", "color_index", "line_connection"})
-        if unknown_style:
-            raise ValueError(f"Unsupported plot style options: {', '.join(unknown_style)}")
-        plot_index = int(style.get("plot_index", 1))
-        if plot_index < 1:
-            raise ValueError("plot_index must be 1 or greater")
-        dataset = f"%({plot_index},@D)"
-        if "color_index" in style:
-            color_index = int(style["color_index"])
-            if color_index < 0:
-                raise ValueError("color_index must be non-negative")
-            commands.append(f"set {dataset} -c {color_index};")
-        if "line_connection" in style:
-            raw_connection = style["line_connection"]
-            if isinstance(raw_connection, str):
-                connection_name = raw_connection.lower()
-                if connection_name not in LINE_CONNECTIONS:
-                    raise ValueError(f"Unsupported line_connection: {raw_connection}")
-                connection = LINE_CONNECTIONS[connection_name]
-            else:
-                connection = int(raw_connection)
-            commands.append(f"set {dataset} -l {connection};")
-    if labtalk:
-        commands.append(labtalk)
-    return commands
-
-
-def _normalize_graph_data_binding(value: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise ValueError("data_binding must be an object")
-    unknown = sorted(
-        set(value)
-        - {"worksheet_name", "x_column", "y_columns", "label_column", "plot_type"}
-    )
-    if unknown:
-        raise ValueError(f"Unsupported data_binding fields: {', '.join(unknown)}")
-    worksheet_name = str(value.get("worksheet_name", "")).strip()
-    y_columns = list(value.get("y_columns") or [])
-    plot_type = str(value.get("plot_type", "line")).lower()
-    if not worksheet_name or "x_column" not in value or not y_columns:
-        raise ValueError(
-            "data_binding requires worksheet_name, x_column, and at least one y_column"
-        )
-    if plot_type not in DATA_BINDING_PLOT_TYPES:
-        raise ValueError("data_binding plot_type must be line, scatter, line_symbol, or bar")
-    normalized = {
-        "worksheet_name": worksheet_name,
-        "x_column": value["x_column"],
-        "y_columns": y_columns,
-        "plot_type": plot_type,
-    }
-    if value.get("label_column") is not None:
-        normalized["label_column"] = value["label_column"]
-    return normalized
-
-
-def _normalize_categorical_style(value: Any) -> dict[str, Any] | None:
-    if value is None:
-        return None
-    if not isinstance(value, Mapping):
-        raise ValueError("categorical_style must be an object")
-    unknown = sorted(
-        set(value) - {"plot_index", "worksheet_name", "category_column", "categories"}
-    )
-    if unknown:
-        raise ValueError(f"Unsupported categorical_style fields: {', '.join(unknown)}")
-    if "category_column" not in value:
-        raise ValueError("categorical_style requires category_column")
-    plot_index = int(value.get("plot_index", 1))
-    if plot_index < 1:
-        raise ValueError("categorical_style plot_index must be 1 or greater")
-    worksheet_name = str(value.get("worksheet_name", "")).strip() or None
-    raw_categories = value.get("categories")
-    if not isinstance(raw_categories, Mapping) or not raw_categories:
-        raise ValueError("categorical_style categories must be a non-empty object")
-    categories: dict[str, dict[str, Any]] = {}
-    for raw_category, raw_style in raw_categories.items():
-        category = str(raw_category)
-        if not category:
-            raise ValueError("categorical_style category names must not be empty")
-        if not isinstance(raw_style, Mapping):
-            raise ValueError(f"Style for category {category!r} must be an object")
-        unknown_style = sorted(set(raw_style) - {"color", "shape", "fill", "size"})
-        if unknown_style:
-            raise ValueError(
-                f"Unsupported style fields for category {category!r}: {', '.join(unknown_style)}"
-            )
-        style: dict[str, Any] = {}
-        if "color" in raw_style:
-            color = str(raw_style["color"]).strip()
-            if not re.fullmatch(r"#[0-9A-Fa-f]{6}", color):
-                raise ValueError(f"Category {category!r} color must use #RRGGBB")
-            style["color"] = color.upper()
-        if "shape" in raw_style:
-            shape = str(raw_style["shape"]).strip().lower()
-            if shape not in CATEGORY_SHAPES:
-                raise ValueError(
-                    f"Category {category!r} shape must be one of: "
-                    f"{', '.join(CATEGORY_SHAPES)}"
-                )
-            style["shape"] = shape
-        if "fill" in raw_style:
-            fill = str(raw_style["fill"]).strip().lower()
-            if fill not in CATEGORY_FILLS:
-                raise ValueError(
-                    f"Category {category!r} fill must be one of: {', '.join(CATEGORY_FILLS)}"
-                )
-            style["fill"] = fill
-        if "size" in raw_style:
-            size = float(raw_style["size"])
-            if size <= 0:
-                raise ValueError(f"Category {category!r} size must be positive")
-            style["size"] = size
-        if not style:
-            raise ValueError(f"Style for category {category!r} must set at least one property")
-        categories[category] = style
-    return {
-        "plot_index": plot_index,
-        "worksheet_name": worksheet_name,
-        "category_column": value["category_column"],
-        "categories": categories,
-    }
-
-
-def _normalize_categorical_legend(value: Any) -> dict[str, Any] | None:
-    if value is None or isinstance(value, bool):
-        return None
-    if not isinstance(value, Mapping):
-        raise ValueError("legend must be true, false, or an object")
-    allowed = {
-        "mode",
-        "source",
-        "plot_index",
-        "position",
-        "font_size",
-        "line_spacing",
-        "border",
-        "background",
-        "replace_existing",
-        "show_all_categories",
-    }
-    unknown = sorted(set(value) - allowed)
-    if unknown:
-        raise ValueError(f"Unsupported categorical legend fields: {', '.join(unknown)}")
-    mode = str(value.get("mode", "categorical")).lower()
-    source = str(value.get("source", "plot_style_mapping")).lower()
-    position = str(value.get("position", "top_right")).lower()
-    background = str(value.get("background", "transparent")).lower()
-    if mode != "categorical":
-        raise ValueError("Structured legend mode must be categorical")
-    if source != "plot_style_mapping":
-        raise ValueError("Categorical legend source must be plot_style_mapping")
-    if position != "top_right":
-        raise ValueError("Only the verified categorical legend position top_right is supported")
-    if background != "transparent":
-        raise ValueError("Only the verified categorical legend background transparent is supported")
-    plot_index = int(value.get("plot_index", 1))
-    if plot_index < 1:
-        raise ValueError("legend plot_index must be 1 or greater")
-    font_size = value.get("font_size")
-    if font_size is not None and float(font_size) <= 0:
-        raise ValueError("legend font_size must be positive")
-    line_spacing = value.get("line_spacing")
-    if line_spacing is not None and float(line_spacing) <= 0:
-        raise ValueError("legend line_spacing must be positive")
-    border = value.get("border", False)
-    replace_existing = value.get("replace_existing", True)
-    show_all = value.get("show_all_categories", False)
-    if not isinstance(border, bool):
-        raise ValueError("legend border must be true or false")
-    if not isinstance(replace_existing, bool):
-        raise ValueError("legend replace_existing must be true or false")
-    if not isinstance(show_all, bool):
-        raise ValueError("legend show_all_categories must be true or false")
-    return {
-        "mode": mode,
-        "source": source,
-        "plot_index": plot_index,
-        "position": position,
-        "font_size": None if font_size is None else float(font_size),
-        "line_spacing": None if line_spacing is None else float(line_spacing),
-        "border": border,
-        "background": background,
-        "replace_existing": replace_existing,
-        "show_all_categories": show_all,
-    }
 
 
 def _origin_text(value: Any) -> str | None:
@@ -1738,41 +1223,6 @@ def _serialized_operation(method: Callable[..., ResultEnvelope]) -> Callable[...
         return result
 
     return locked
-
-
-def _coerce_delimited_cell(value: str) -> Any:
-    text = value.strip()
-    if text == "":
-        return None
-    try:
-        return int(text)
-    except ValueError:
-        try:
-            return float(text)
-        except ValueError:
-            return value
-
-
-def _split_header(
-    rows: list[list[Any]],
-    has_header: bool | None,
-) -> tuple[list[str] | None, list[list[Any]]]:
-    detected = has_header
-    if detected is None:
-        detected = False
-        if len(rows) >= 2:
-            first = rows[0]
-            second = rows[1]
-            first_has_text = any(isinstance(value, str) and value.strip() for value in first)
-            second_values = [value for value in second if value is not None]
-            second_is_numeric = bool(second_values) and all(
-                isinstance(value, (int, float)) and not isinstance(value, bool)
-                for value in second_values
-            )
-            detected = first_has_text and second_is_numeric
-    if not detected or not rows:
-        return None, rows
-    return ["" if value is None else str(value) for value in rows[0]], rows[1:]
 
 
 def _exception_error_code(exc: Exception) -> str:
@@ -4111,7 +3561,7 @@ class OriginController:
         if not source.is_file():
             return ResultEnvelope.fail("INPUT_NOT_FOUND", f"Data file does not exist: {source}")
         try:
-            source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+            source_sha256 = sha256_file(source)
         except OSError as exc:
             return ResultEnvelope.fail(
                 _exception_error_code(exc),
@@ -4248,7 +3698,7 @@ class OriginController:
             def validate_linked_import() -> ResultEnvelope:
                 app = self._require_app()
                 try:
-                    current_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+                    current_source_sha256 = sha256_file(source)
                 except OSError:
                     return ResultEnvelope.fail(
                         "DATA_SOURCE_UNAVAILABLE",
@@ -5360,15 +4810,10 @@ class OriginController:
             graph_layer = app.FindGraphLayer(created_name)
             if graph_layer is None:
                 raise LookupError(f"Origin graph layer was not created: {created_name}")
-            plot_type = {
-                "line": ORIGIN_PLOT_LINE,
-                "scatter": ORIGIN_PLOT_SCATTER,
-                "line_symbol": ORIGIN_PLOT_LINESYMB,
-                "semilog": ORIGIN_PLOT_LINE,
-                "loglog": ORIGIN_PLOT_LINE,
-                "bar": ORIGIN_PLOT_COLUMN,
-                "multi_layer": ORIGIN_PLOT_LINESYMB,
-            }[spec.graph_type]
+            catalog_entry = graph_catalog()[spec.graph_type]
+            plot_type = catalog_entry["plot_id"]
+            if plot_type is None:
+                raise ValueError(f"No Origin plot mapping is registered for {spec.graph_type}")
             layers_created = 1
             if spec.graph_type == "multi_layer":
                 page = app.GraphPages.Item(created_name)

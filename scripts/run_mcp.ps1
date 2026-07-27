@@ -4,6 +4,8 @@ $RuntimeRoot = & (Join-Path $PSScriptRoot 'runtime_path.ps1')
 $RuntimePython = & (Join-Path $PSScriptRoot 'runtime_path.ps1') -Python
 if (-not (Test-Path -LiteralPath $RuntimePython)) {
     & (Join-Path $PSScriptRoot 'bootstrap.ps1') -RuntimeRoot $RuntimeRoot
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 }
-& $RuntimePython -c "import json; from origin_com_automation.tools.health import health_check; print(json.dumps(health_check().to_dict(), indent=2))"
+$env:PYTHONNOUSERSITE = '1'
+& $RuntimePython -m origin_com_automation.server
 exit $LASTEXITCODE

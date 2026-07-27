@@ -1,165 +1,152 @@
 # Changelog
 
-All notable changes to Origin COM Automation are recorded here. The format follows Keep a
-Changelog, and the project uses semantic versioning. Validation statements distinguish fake-COM
-tests from real Origin COM tests.
+All notable changes to `origin-com-automation` are documented here. The project follows a
+non-overwriting, local-release workflow; entries describe the code and validation available in
+the corresponding repository version.
 
-## [0.3.1] - 2026-07-28
-
-### Added
-
-- Added `origin_run_task`, a synchronous one-call workflow for ordinary complete requests. It
-  plans internally, returns all missing scientific decisions together before creating an Origin
-  controller, and otherwise executes through the existing WorkflowEngine.
-- Added automatic recovery-policy resolution with `none`, `milestone`, `phase`, and `mutation`
-  behavior preserved behind the public `checkpoint_policy="auto"` default.
-
-### Changed
-
-- Ordinary one-source workflows now reuse import row/profile evidence, skip redundant worksheet
-  reads and full-project graph audits, save the project once, and do not create default manifests
-  or reopen the project.
-- `auto` selects no checkpoint for ordinary tasks and one milestone checkpoint for longer source,
-  analysis, large-file, or batch workloads. Strict phase or mutation recovery remains opt-in.
-
-### Safety
-
-- Final project validation, fail-fast mutation handling, stable refs, source protection, and
-  plugin-owned shutdown remain mandatory. Missing scientific choices still stop before COM starts.
-
-### Validation
-
-- Unit, stdio, static, packaging, plugin, Skill, and bounded live Origin evidence is recorded in
-  `docs/VALIDATION-0.3.1.md`.
-
-### Known limits
-
-- One-call execution is synchronous. Long or intentionally checkpoint-heavy work should use the
-  explicit plan, execute, status, and resume tools.
-
-## [0.3.0] - 2026-07-27
+## [0.4.0]
 
 ### Added
 
-- Added the strict `WorkflowSpec` contract and six high-level MCP tools for offline planning,
-  digest-bound execution, status, checkpoint resume, targeted audit, and manifest export.
-- Added one-shot scientific parameter contracts, irregular CSV/Excel header previews, stable
-  object references, plugin-owned helper ranges, phase ledgers, OPJU checkpoints, graph layout QA,
-  clipping checks, and JSON/text/Origin Notes reproducibility manifests.
-- Added version-aware native expression planning. Verified scalar Origin functions are preferred;
-  the installed Origin 10.1 `differentiate` X-Function contract is registered, while
-  `dderivative` remains supported-unverified until its exact live signature is proven.
+- Versioned external MCP runtime under `%LOCALAPPDATA%\OriginComAutomation\runtime\<version>`.
+- Shared `mcp` schemas/helpers, COM worksheet/graph/project support modules, and deterministic
+  hashing/runtime utilities.
+- FigureSpec-to-WorkflowSpec adapter, project-input support, canonical task status, and one batch
+  planner/executor.
+- One graph catalog for typed, role-based, semilog, loglog, and multi-layer graph routes.
 
 ### Changed
 
-- The recommended route is now `plan -> validate -> execute`: collect all `required_decisions`
-  once, approve one immutable digest, execute with an `idempotency_key`, then audit only named
-  result objects.
-- Batch work defaults to `fail_fast=true`. Completed mutation keys are not replayed during resume.
-- Native Origin formulas, X-Functions, and Analysis Operations are selected before an external
-  backend. Python runs only under the explicit `external_explicit` policy.
+- FigureSpec compatibility tools now execute through the same WorkflowEngine as WorkflowSpec.
+- MCP launchers use a non-editable runtime instead of importing a copied repository `.venv`.
+- File SHA-256, model digest, strict-model, and Origin-version logic now have one implementation.
+- Public tool names, result envelopes, error codes, native-analysis defaults, and safety gates remain
+  compatible with 0.3.1.
 
 ### Safety
 
-- Execution requires a fresh plugin-owned Origin session, never mutates an attached user session,
-  never overwrites source data or OPJU by default, and verifies every result-defining mutation.
-- Resume verifies the workflow digest, source hashes, checkpoint hash, and prior stage outputs.
+- The external runtime is version-scoped and bootstrapped under a lock; attached Origin sessions
+  remain read-only and only plugin-owned sessions may be shut down.
 
 ### Validation
 
-- Unit and real stdio MCP transport coverage validate planning, schemas, idempotency, checkpoints,
-  audits, manifests, and graph QA without requiring Origin.
-- Real Origin 10.1 validation proved the complete linked-data workflow, native auto-recalculating
-  `differentiate` operation, graph, PNG pixels, manifests, OPJU reopen, and owned-process exit.
-  Fake COM tests are never reported as real COM success.
+- See [0.4.0 validation](docs/VALIDATION-0.4.0.md) for unit, static, distribution, stdio, and live
+  Origin evidence.
 
 ### Known limits
 
-- Interrupted-session checkpoint resume remains supported-unverified until a bounded live
-  interruption test proves it without replaying a completed mutation.
-- Specialized graph families and template routes retain their per-capability verification status.
+- Specialized Origin versions and capability-gated graph/X-Function routes still require live
+  verification on that installed Origin version.
 
-## [0.2.1] - 2026-07-26
+## [0.3.1]
 
 ### Added
 
-- Added persistent local CSV/Excel Data Connectors, editable Origin `F(x)` columns, verified native
-  `fitlr` Analysis Operations, and synchronized English and Chinese documentation.
+- Balanced fast `origin_run_task` execution with grouped missing scientific decisions.
+- Automatic checkpoint policy: no checkpoint for ordinary work and one milestone for longer work.
 
 ### Changed
 
-- Linked import and Origin-native auto-recalculating analysis became the public defaults.
-- Python analysis became an explicit non-recalculating compatibility choice.
+- Removed redundant ordinary-task audits, manifests, reopen checks, and worksheet scans.
 
 ### Safety
 
-- Source files stayed connected but protected; formulas and native operations required metadata
-  and result readback rather than accepting a non-throwing command.
+- Strict phase/mutation recovery remains opt-in and poisoned sessions are isolated.
 
 ### Validation
 
-- Origin 10.1 live validation covered linked CSV/Excel, formula persistence, native linear fit,
-  OPJU save/reopen, graph export, Matrix, Image Page, Notes, folders, FigureSpec, and serial batch.
+- See [0.3.1 validation](docs/VALIDATION-0.3.1.md).
 
 ### Known limits
 
-- Native high-level analysis mapping was limited mainly to verified linear fit and FFT options.
+- The 0.3.1 installer copied development runtime state; 0.4.0 replaces that path with an external
+  immutable runtime.
 
-## [0.2.0] - 2026-07-26
+## [0.3.0]
 
 ### Added
 
-- Expanded the plugin with structured X-Functions, Analysis Operations, Data Connectors, worksheet
-  transforms, Matrix and Image Page tools, graph families, templates, layouts, previews,
-  Project Folder, Notes, FigureSpec, batching, capability reporting, and local knowledge lookup.
+- Intent-aware WorkflowSpec, parameter contracts, native-first execution, stable refs, and
+  reproducibility manifests.
 
 ### Changed
 
-- Specialized operations moved behind explicit capability states: `verified`,
-  `supported_unverified`, or `unsupported`.
+- Added strict plan, validate, execute, audit, and resume routes.
 
 ### Safety
 
-- Added strict schemas, stable refs, source/template hashes, non-overwrite defaults, and pixel/file
-  checks for exported artifacts.
+- Non-overwriting project copies, fail-fast batches, and explicit source replacement gates.
 
 ### Validation
 
-- `docs/VALIDATION-0.2.0.md` records unit, transport, packaging, and bounded Origin smoke evidence.
+- See [0.3.0 validation](docs/VALIDATION-0.3.0.md).
 
 ### Known limits
 
-- Several 3D/statistical graphs, templates, Matrix transforms, and analysis templates were exposed
-  only as supported-unverified routes.
+- Strict workflow execution is more verbose than the balanced 0.3.1 route.
 
-## [0.1.0] - 2026-07-25
+## [0.2.1]
 
 ### Added
 
-- Initial personal Codex plugin with a local Python MCP server, pywin32 Origin COM controller,
-  serialized STA worker, project and worksheet tools, structured analysis, plotting, export,
-  health checks, LabTalk, recovery, tests, and installation scripts.
+- Native Origin formulas, analysis operations, connectors, templates, graph preview, and recovery.
 
 ### Changed
 
-- Established the common result envelope used by all public tools.
+- Improved mixed-column import and write readback.
 
 ### Safety
 
-- Protected source OPJU files, distinguished owned from attached sessions, refused to close user
-  sessions, avoided PID-based termination, and validated saves and graph artifacts.
+- Added owned-process tracking and poisoned-session recovery.
 
 ### Validation
 
-- Unit tests used fake COM objects; bounded live smoke tests were separately identified when run.
+- See [0.2.1 validation](docs/VALIDATION-0.2.1.md).
 
 ### Known limits
 
-- The initial release was primarily a focused low-level tool collection without intent planning,
-  stable workflow digests, native operation breadth, or checkpoint resume.
+- Origin installation and ProgID behavior remain version-dependent.
 
-[0.3.1]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.3.0...HEAD
-[0.3.0]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.2.1...v0.3.0
-[0.2.1]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.2.0...v0.2.1
-[0.2.0]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.1.0...v0.2.0
-[0.1.0]: https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.1.0
+## [0.2.0]
+
+### Added
+
+- Initial structured Origin COM MCP surface for projects, worksheets, analyses, graphs, and exports.
+
+### Changed
+
+- Centralized COM access on a serial STA worker.
+
+### Safety
+
+- Source projects are protected by default.
+
+### Validation
+
+- See [0.2.0 validation](docs/VALIDATION-0.2.0.md).
+
+### Known limits
+
+- Only the verified Origin version matrix should be treated as supported.
+
+## [0.1.0]
+
+### Added
+
+- First personal Codex plugin scaffold and local Python MCP server.
+
+### Changed
+
+- Established the plugin manifest, Skill, scripts, and test layout.
+
+### Safety
+
+- COM automation is local-only and explicit.
+
+### Validation
+
+- Initial unit and packaging checks.
+
+### Known limits
+
+- Feature coverage was limited to the first COM paths.

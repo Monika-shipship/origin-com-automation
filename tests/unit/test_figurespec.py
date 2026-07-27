@@ -4,6 +4,7 @@ from pydantic import ValidationError
 from origin_com_automation.contracts import ResultEnvelope
 from origin_com_automation.workflows.executor import execute_figure
 from origin_com_automation.workflows.figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
+from origin_com_automation.workflows.adapters import figure_to_workflow_spec
 
 
 def minimal_spec(**changes):
@@ -79,6 +80,32 @@ def test_figurespec_digest_changes_with_source_and_analysis_execution_modes():
     assert native.analyses[0].create_operation is True
     assert native.analyses[0].recalculate_mode == "auto"
     assert figure_spec_digest(native) != figure_spec_digest(snapshot)
+
+
+def test_figurespec_adapter_uses_one_workflow_contract_for_data_and_restyle_routes(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    data_spec = minimal_spec(
+        input={"path": str(source), "worksheet_ref": "[Book1]Data"},
+        outputs={"project_path": str(tmp_path / "data.opju")},
+    )
+    workflow = figure_to_workflow_spec(data_spec)
+    assert workflow.intent == "custom"
+    assert workflow.sources[0].import_mode == "linked"
+    assert workflow.execution.checkpoint_policy == "none"
+    assert workflow.plots[0].roles["worksheet"] == "[Book1]Data"
+
+    project = tmp_path / "input.opju"
+    project.write_bytes(b"Origin project")
+    restyle = minimal_spec(
+        route="restyle_project",
+        input={"path": str(project), "worksheet_ref": "[Book1]Data"},
+        outputs={"project_path": str(tmp_path / "restyled.opju")},
+    )
+    restyle_workflow = figure_to_workflow_spec(restyle)
+    assert restyle_workflow.intent == "custom"
+    assert restyle_workflow.sources[0].import_mode == "project"
+    assert restyle_workflow.sources[0].path == str(project.resolve())
 
 
 def test_figurespec_analysis_execution_modes_are_not_duplicated_inside_options():

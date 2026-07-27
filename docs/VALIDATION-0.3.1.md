@@ -32,8 +32,7 @@ Bounded live smoke tests ran on Windows 11 x64 with Python 3.13 x64 and Origin `
 
 ## Local Installation
 
-- Installed cache root:
-  `C:/Users/27421/.codex/plugins/cache/personal/origin-com-automation/0.3.1+codex.20260727183824`.
+- Installed cache root: `%CODEX_HOME%/plugins/cache/personal/origin-com-automation/0.3.1+codex.20260727183824`.
 - The installed cache passed the real stdio transport test and listed all 52 tools.
 - Installation audit reproduced the packaging debt targeted for 0.4.0: the cache copied a
   409.8 MiB repository `.venv`, a 21 MiB mypy cache, and an editable package whose metadata still
