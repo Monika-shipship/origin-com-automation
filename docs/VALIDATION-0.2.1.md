@@ -11,7 +11,8 @@ Environment: Windows 11 x64, Python 3.13 x64, Origin 10.1.0.178 x64
 | Gate | Result |
 |---|---|
 | Python compilation | Passed for `src` and `tests` |
-| Unit and MCP tests | 260 passed |
+| Unit and MCP tests | 266 passed |
+| Bilingual README contract | English/Chinese section order, 45 tools, local links, defaults, architecture, and disclaimers verified |
 | Ruff | Passed |
 | mypy | Passed for 44 source files |
 | Wheel and source build | Passed for 0.2.1 |
