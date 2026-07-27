@@ -26,7 +26,8 @@ Typical uses include:
 
 Release evidence is recorded in [0.2.0 validation](docs/VALIDATION-0.2.0.md) and
 [0.2.1 validation](docs/VALIDATION-0.2.1.md), with the current candidate covered by
-[0.3.0 validation](docs/VALIDATION-0.3.0.md). See the complete [version history](CHANGELOG.md).
+[0.3.0 validation](docs/VALIDATION-0.3.0.md) and
+[0.3.1 validation](docs/VALIDATION-0.3.1.md). See the complete [version history](CHANGELOG.md).
 
 <!-- section:requirements -->
 ## Requirements
@@ -85,14 +86,17 @@ named graph, preserve its worksheet binding, save as device-reviewed.opju, and e
 Do not overwrite the source project.
 ```
 
-For a complete new-data, analysis, or figure task, `0.3.0` uses this shorter high-level route:
+For an ordinary complete new-data, analysis, or figure task, `0.3.1` uses one high-level call:
 
-1. `origin_health_check`
-2. `origin_plan_workflow` with the complete `WorkflowSpec`; this performs offline `plan -> validate`
-3. answer all returned `required_decisions` together, then plan once more
-4. `origin_execute_workflow` with the approved digest and a unique `idempotency_key`
-5. read progress with `origin_workflow_status`; use `origin_resume_workflow` only after a verified checkpoint failure
-6. finish with `origin_audit_result` and `origin_export_manifest`
+1. call `origin_run_task` with the complete `WorkflowSpec`;
+2. if it returns `needs_input`, answer all `required_decisions` together and call it once more;
+3. receive the saved project, stable refs, methods, verification, artifacts, and shutdown state.
+
+The caller does not provide a digest, `idempotency_key`, task ID, or status polling loop. For a long
+task that explicitly needs strict recovery, retain the `0.3.0` route:
+`origin_plan_workflow` -> `origin_execute_workflow` -> `origin_workflow_status` and, only after a
+verified checkpoint failure, `origin_resume_workflow`. Use `origin_audit_result` and
+`origin_export_manifest` only when those extra deliverables are requested.
 
 The engine creates its own hidden Origin instance, imports with default `source_mode="linked"`,
 executes `fail_fast=true`, verifies each mutation, saves separately, and shuts down the owned
@@ -115,7 +119,7 @@ merely because a PID appeared during activation.
 <!-- section:tool-surface -->
 ## Tool Surface
 
-The MCP server exposes 51 focused tools. `origin_capabilities` reports each specialized family as
+The MCP server exposes 52 focused tools. `origin_capabilities` reports each specialized family as
 `verified`, `supported_unverified`, or `unsupported` for the detected Origin version.
 
 | Area | Tools |
@@ -128,7 +132,7 @@ The MCP server exposes 51 focused tools. `origin_capabilities` reports each spec
 | Analysis | `origin_run_analysis`, `origin_run_xfunction`, `origin_list_analysis_operations`, `origin_get_analysis_operation`, `origin_recalculate_analysis`, `origin_manage_analysis_template`, `origin_execute_labtalk` |
 | Graphs | `origin_graph_catalog`, `origin_palette_catalog`, `origin_list_graph_templates`, `origin_create_plot`, `origin_create_graph`, `origin_configure_graph`, `origin_manage_graph_layout`, `origin_apply_graph_template` |
 | Export and QA | `origin_export_graph`, `origin_view_graph`, `origin_inspect_png` |
-| Workflows | `origin_plan_workflow`, `origin_execute_workflow`, `origin_workflow_status`, `origin_resume_workflow`, `origin_audit_result`, `origin_export_manifest`, `origin_plan_figure`, `origin_execute_figure`, `origin_submit_batch`, `origin_task_status`, `origin_cancel_task` |
+| Workflows | `origin_run_task`, `origin_plan_workflow`, `origin_execute_workflow`, `origin_workflow_status`, `origin_resume_workflow`, `origin_audit_result`, `origin_export_manifest`, `origin_plan_figure`, `origin_execute_figure`, `origin_submit_batch`, `origin_task_status`, `origin_cancel_task` |
 
 All tools use a common result envelope:
 
@@ -148,13 +152,20 @@ steps during healthy work.
 
 ### Complete intent-aware workflow (recommended)
 
-Call `origin_plan_workflow` before starting Origin. Its parameter contract classifies values as
+Use `origin_run_task` for an ordinary complete request. It plans without creating Origin, reports
+all `required_decisions` together when scientific meaning is incomplete, and otherwise performs
+the approved native workflow synchronously. With `checkpoint_policy="auto"`, an ordinary task has
+no intermediate checkpoint, no default manifest, no reopen audit, and exactly one final project
+save. Longer multi-source, multi-analysis, large-file, or batch work receives one milestone.
+
+Use the explicit strict route only when resume granularity is part of the requirement. Call
+`origin_plan_workflow` before starting Origin. Its parameter contract classifies values as
 provided, derived, safe defaults, or `required_decisions`. Scientific decisions such as branch,
 range, units, model, derivative method, missing values, and normalization are reported together;
 the plugin does not guess them. After one approved digest, `origin_execute_workflow` performs the
-planned mutations once with `fail_fast=true`. It records stable refs and actual values, writes
-phase checkpoints and a reproducibility manifest, and allows `origin_resume_workflow` to continue
-at the first incomplete stage without replaying completed mutation keys.
+planned mutations once with `fail_fast=true`. Set `checkpoint_policy="phase"` for phase recovery
+or `"mutation"` for the strictest recovery. `origin_resume_workflow` continues at the first
+incomplete stage without replaying completed mutation keys.
 
 ### Diagnose the environment
 
@@ -319,9 +330,9 @@ warnings, and error codes. Worksheet values and other sensitive scientific data 
 <!-- section:figurespec-batch -->
 ## FigureSpec And Batch Workflows
 
-`WorkflowSpec` is the preferred `0.3.0` high-level contract. It separates source/data/scientific
-contracts from formulas, native analyses, plots, outputs, QA, and execution policy. The six tools
-`origin_plan_workflow`, `origin_execute_workflow`, `origin_workflow_status`,
+`WorkflowSpec` is the preferred `0.3.0` contract, with `0.3.1` adding its direct one-call route. It
+separates source/data/scientific contracts from formulas, native analyses, plots, outputs, QA, and
+execution policy. `origin_run_task`, `origin_plan_workflow`, `origin_execute_workflow`, `origin_workflow_status`,
 `origin_resume_workflow`, `origin_audit_result`, and `origin_export_manifest` share the same lower
 level Controller as every focused tool, so safety and verification behavior do not fork.
 
@@ -492,3 +503,4 @@ Version history and test evidence:
 - [Origin COM Automation 0.2.0 validation](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 validation](docs/VALIDATION-0.2.1.md)
 - [Origin COM Automation 0.3.0 validation](docs/VALIDATION-0.3.0.md)
+- [Origin COM Automation 0.3.1 validation](docs/VALIDATION-0.3.1.md)

@@ -7,7 +7,7 @@ from pathlib import Path
 from scripts.release_audit import audit_repository
 
 
-def test_repository_release_versions_are_030():
+def test_repository_release_versions_are_031():
     root = Path(__file__).resolve().parents[2]
     manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
     project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
@@ -18,9 +18,9 @@ def test_repository_release_versions_are_030():
         if isinstance(node, ast.Assign)
         and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
     )
-    assert manifest["version"].split("+", 1)[0] == "0.3.0"
-    assert project["project"]["version"] == "0.3.0"
-    assert runtime == "0.3.0"
+    assert manifest["version"].split("+", 1)[0] == "0.3.1"
+    assert project["project"]["version"] == "0.3.1"
+    assert runtime == "0.3.1"
 
 
 def _run(root: Path, *args: str) -> None:

@@ -4,6 +4,39 @@ All notable changes to Origin COM Automation are recorded here. The format follo
 Changelog, and the project uses semantic versioning. Validation statements distinguish fake-COM
 tests from real Origin COM tests.
 
+## [0.3.1] - 2026-07-28
+
+### Added
+
+- Added `origin_run_task`, a synchronous one-call workflow for ordinary complete requests. It
+  plans internally, returns all missing scientific decisions together before creating an Origin
+  controller, and otherwise executes through the existing WorkflowEngine.
+- Added automatic recovery-policy resolution with `none`, `milestone`, `phase`, and `mutation`
+  behavior preserved behind the public `checkpoint_policy="auto"` default.
+
+### Changed
+
+- Ordinary one-source workflows now reuse import row/profile evidence, skip redundant worksheet
+  reads and full-project graph audits, save the project once, and do not create default manifests
+  or reopen the project.
+- `auto` selects no checkpoint for ordinary tasks and one milestone checkpoint for longer source,
+  analysis, large-file, or batch workloads. Strict phase or mutation recovery remains opt-in.
+
+### Safety
+
+- Final project validation, fail-fast mutation handling, stable refs, source protection, and
+  plugin-owned shutdown remain mandatory. Missing scientific choices still stop before COM starts.
+
+### Validation
+
+- Unit, stdio, static, packaging, plugin, Skill, and bounded live Origin evidence is recorded in
+  `docs/VALIDATION-0.3.1.md`.
+
+### Known limits
+
+- One-call execution is synchronous. Long or intentionally checkpoint-heavy work should use the
+  explicit plan, execute, status, and resume tools.
+
 ## [0.3.0] - 2026-07-27
 
 ### Added
@@ -125,7 +158,8 @@ tests from real Origin COM tests.
 - The initial release was primarily a focused low-level tool collection without intent planning,
   stable workflow digests, native operation breadth, or checkpoint resume.
 
-[0.3.0]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.2.1...HEAD
+[0.3.1]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.2.1...v0.3.0
 [0.2.1]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/Sheldon12311815/origin-com-automation/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.1.0

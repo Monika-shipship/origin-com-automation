@@ -33,7 +33,8 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 
 版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)、
 [0.2.1 验证报告](docs/VALIDATION-0.2.1.md)和当前候选版的
-[0.3.0 验证报告](docs/VALIDATION-0.3.0.md)。每版变化见[完整版本历史](CHANGELOG.md)。
+[0.3.0 验证报告](docs/VALIDATION-0.3.0.md)和
+[0.3.1 验证报告](docs/VALIDATION-0.3.1.md)。每版变化见[完整版本历史](CHANGELOG.md)。
 
 <!-- section:requirements -->
 ## 运行环境
@@ -90,14 +91,16 @@ codex plugin add origin-com-automation@personal
 保持图形直接绑定原表，另存为 device-reviewed.opju 并导出。不要覆盖原项目。
 ```
 
-对于完整的新数据、分析或绘图任务，`0.3.0` 推荐走更短的高级关键路径：
+对于完整的新数据、分析或绘图任务，`0.3.1` 默认使用一次高层调用：
 
-1. `origin_health_check` 检查环境；
-2. 向 `origin_plan_workflow` 提交完整 `WorkflowSpec`，离线完成 `plan -> validate`；
-3. 一次性回答全部 `required_decisions`，然后只重新规划一次；
-4. 用已批准 digest 和唯一 `idempotency_key` 调用 `origin_execute_workflow`；
-5. 用 `origin_workflow_status` 查看进度；只有存在已验证检查点时才使用 `origin_resume_workflow`；
-6. 用 `origin_audit_result` 定向验收，并用 `origin_export_manifest` 导出分析清单。
+1. 把完整 `WorkflowSpec` 交给 `origin_run_task`；
+2. 如果返回 `needs_input`，一次性回答全部 `required_decisions`，再调用一次；
+3. 直接取得项目、稳定引用、方法、验证、产物和退出状态。
+
+调用方不需要提供 digest、`idempotency_key`、任务 ID 或轮询状态。只有长任务明确要求严格恢复时，
+才使用 `0.3.0` 的 `origin_plan_workflow` -> `origin_execute_workflow` ->
+`origin_workflow_status` 路线，并只在存在已验证检查点时使用 `origin_resume_workflow`。
+`origin_audit_result` 和 `origin_export_manifest` 也只在确实需要这些额外交付物时调用。
 
 引擎会自行创建隐藏的 Origin 实例，默认 `source_mode="linked"`，以 `fail_fast=true` 执行，
 逐项验证修改，另存项目并关闭自有实例。特殊对象级任务仍可使用底层工具。
@@ -118,7 +121,7 @@ Origin COM 没有提供可靠的“COM 代理对应哪个 PID”接口。因此�
 <!-- section:tool-surface -->
 ## 工具总览
 
-MCP Server 共暴露 51 个结构化工具。对于专业图形、分析或对象操作，可以先调用
+MCP Server 共暴露 52 个结构化工具。对于专业图形、分析或对象操作，可以先调用
 `origin_capabilities`，查看当前 Origin 版本下该能力属于 `verified`（已验证）、
 `supported_unverified`（支持但未完整验证）还是 `unsupported`（不支持）。
 
@@ -132,7 +135,7 @@ MCP Server 共暴露 51 个结构化工具。对于专业图形、分析或对�
 | 数据分析 | `origin_run_analysis`、`origin_run_xfunction`、`origin_list_analysis_operations`、`origin_get_analysis_operation`、`origin_recalculate_analysis`、`origin_manage_analysis_template`、`origin_execute_labtalk` |
 | 图形 | `origin_graph_catalog`、`origin_palette_catalog`、`origin_list_graph_templates`、`origin_create_plot`、`origin_create_graph`、`origin_configure_graph`、`origin_manage_graph_layout`、`origin_apply_graph_template` |
 | 导出和图像验证 | `origin_export_graph`、`origin_view_graph`、`origin_inspect_png` |
-| 高级工作流 | `origin_plan_workflow`、`origin_execute_workflow`、`origin_workflow_status`、`origin_resume_workflow`、`origin_audit_result`、`origin_export_manifest`、`origin_plan_figure`、`origin_execute_figure`、`origin_submit_batch`、`origin_task_status`、`origin_cancel_task` |
+| 高级工作流 | `origin_run_task`、`origin_plan_workflow`、`origin_execute_workflow`、`origin_workflow_status`、`origin_resume_workflow`、`origin_audit_result`、`origin_export_manifest`、`origin_plan_figure`、`origin_execute_figure`、`origin_submit_batch`、`origin_task_status`、`origin_cancel_task` |
 
 所有工具返回统一结构：
 
@@ -151,10 +154,16 @@ Skill 会先判断任务属于哪条路线，再调用工具，避免健康任�
 
 ### 完整意图工作流（推荐）
 
-在启动 Origin 前先调用 `origin_plan_workflow`。参数契约会把信息分为用户已提供、可确定推导、
+普通完整任务使用 `origin_run_task`。它在不创建 Origin 的情况下先规划；科学含义不完整时一次返回
+全部 `required_decisions`，否则同步完成原生工作流。`checkpoint_policy="auto"` 下，普通任务不保存
+中间检查点、不默认生成 manifest、不重新打开项目，只做一次最终项目保存；多数据源、多分析、
+大文件或批量任务最多增加一个里程碑检查点。
+
+只有恢复粒度本身是要求时才使用严格路线。在启动 Origin 前先调用 `origin_plan_workflow`。参数契约会把信息分为用户已提供、可确定推导、
 安全默认值和 `required_decisions`。扫描分支、数据范围、单位、模型、导数方法、缺失值和归一化
 等科学选择会一次列全，插件不会猜。批准一个 digest 后，`origin_execute_workflow` 以
-`fail_fast=true` 一次执行，记录稳定对象引用和实际值，按阶段保存检查点和可复现清单。
+`fail_fast=true` 一次执行，记录稳定对象引用和实际值。需要阶段恢复时显式设置
+`checkpoint_policy="phase"`，需要最严格恢复时设置 `"mutation"`。
 `origin_resume_workflow` 只从首个未完成阶段继续，不重放已完成的修改键。
 
 ### 环境诊断
@@ -303,8 +312,8 @@ COM 方法不报错只能说明调用返回，不能证明结果正确。导入�
 <!-- section:figurespec-batch -->
 ## FigureSpec、批量任务与图形
 
-`WorkflowSpec` 是 `0.3.0` 推荐的高层契约，把数据源、数据参数、科学参数、公式、原生分析、
-绘图、输出、QA 和执行策略明确分开。六个高层工具 `origin_plan_workflow`、
+`WorkflowSpec` 是 `0.3.0` 引入的高层契约，`0.3.1` 增加了直接一次调用路线。它把数据源、数据参数、科学参数、公式、原生分析、
+绘图、输出、QA 和执行策略明确分开。`origin_run_task`、`origin_plan_workflow`、
 `origin_execute_workflow`、`origin_workflow_status`、`origin_resume_workflow`、
 `origin_audit_result` 和 `origin_export_manifest` 最终仍调用同一套底层 Controller，
 不会形成两套不一致的安全或验证逻辑。
@@ -461,3 +470,4 @@ LICENSE 文件为准。
 - [Origin COM Automation 0.2.0 验证报告](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 验证报告](docs/VALIDATION-0.2.1.md)
 - [Origin COM Automation 0.3.0 验证报告](docs/VALIDATION-0.3.0.md)
+- [Origin COM Automation 0.3.1 验证报告](docs/VALIDATION-0.3.1.md)

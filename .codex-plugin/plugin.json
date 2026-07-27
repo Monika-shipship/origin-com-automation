@@ -1,6 +1,6 @@
 {
   "name": "origin-com-automation",
-  "version": "0.3.0+codex.20260727081330",
+  "version": "0.3.1+codex.20260728023000",
   "description": "Safe serialized Origin COM automation for data analysis, plotting, and export.",
   "author": {
     "name": "Dawn"
@@ -20,7 +20,7 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Plan this Origin data analysis and list every scientific decision still required.",
+      "Complete this Origin data analysis in one pass and ask only for missing scientific decisions.",
       "Execute the approved Origin workflow once and deliver an editable OPJU with a manifest.",
       "Audit this named Origin graph, its data binding, native analysis operation, and exported image."
     ]

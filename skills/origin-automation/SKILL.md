@@ -7,7 +7,7 @@ description: Use when Codex needs to inspect or control OriginLab on Windows thr
 
 Use the MCP tools as the deterministic control surface. Resolve objects by returned names/refs,
 preserve the user's scientific choices, and finish through the shortest route that still verifies
-the requested result. Prefer one digest-bound WorkflowSpec execution for a clear end-to-end task;
+the requested result. Prefer one synchronous `origin_run_task` call for a clear end-to-end task;
 use FigureSpec for the legacy two-route contract and focused tools for exact object-level control.
 
 For new data, preserve editability by default: import with `source_mode="linked"`, create derived
@@ -35,12 +35,17 @@ Choose exactly one primary route and do not mix in diagnostic work unless its tr
    Use this route when input, analysis choices, plot roles, OPJU output, exports, and QA fit the
    strict schema. Use `origin_submit_batch` for two or more independent items. Do not expand this
    route into the low-level call sequence unless planning reports a specific unsupported feature.
-6. **Intent-aware workflow (preferred for complete tasks):** call `origin_plan_workflow` once with
-   the complete source, scientific contract, formulas, analyses, plots, outputs, and QA.
-   Ask all `required_decisions` together. Replan once with those answers. Execute one approved digest with
-   `origin_execute_workflow` and a unique `idempotency_key`; poll `origin_workflow_status` only
-   while queued or running. Use `origin_resume_workflow` only when the ledger exposes a verified
-   checkpoint. Finish with bounded `origin_audit_result` targets and `origin_export_manifest`.
+6. **Intent-aware workflow (preferred for ordinary complete tasks):** call `origin_run_task` once
+   with the complete source, scientific contract, formulas, analyses, plots, outputs, and QA. If
+   it returns `needs_input`, Ask all `required_decisions` together and call it once more. Do not poll
+   this synchronous route or repeat successful stages. Leave `checkpoint_policy="auto"`; ordinary
+   work resolves to no checkpoint and longer work receives at most one milestone checkpoint.
+7. **Strict recoverable workflow (explicit):** use `origin_plan_workflow`, approve one digest,
+   then `origin_execute_workflow` with a unique `idempotency_key`. Execute one approved digest.
+   Poll `origin_workflow_status`
+   only while queued or running. Set `checkpoint_policy="phase"` or `"mutation"` only when its
+   extra saves are justified. Use `origin_resume_workflow` only when the ledger exposes a verified
+   checkpoint, then finish with bounded `origin_audit_result` and `origin_export_manifest` calls.
 
 For Matrix, Image Page, Data Connector, `F(x)` formula, native operation, template, folder, or Note work, use the
 corresponding focused `origin_manage_*` or native-analysis tool inside route 3 or 4. Call
@@ -77,8 +82,10 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - The optional second object audit is reserved for changed structure/bindings or one lookup recovery.
 - A FigureSpec job uses one plan and one execution call. Poll `origin_task_status` only for an
   asynchronous submission; do not poll a synchronous execution.
-- A WorkflowSpec job uses one successful plan, one approved digest, and one execution submission.
-  Never split it into exploratory low-level mutations after approval.
+- An ordinary WorkflowSpec job uses one synchronous `origin_run_task` call, or two only when the
+  first returns all missing scientific decisions. Do not poll a synchronous execution.
+- A strict recoverable WorkflowSpec job uses one successful plan, one approved digest, and one
+  execution submission. Never split it into exploratory low-level mutations after approval.
 - Query `origin_graph_catalog`, `origin_palette_catalog`, `origin_list_graph_templates`, or
   `origin_query_knowledge` only when their result is needed to choose or validate the requested
   route. They are discovery tools, not routine preambles.

@@ -40,6 +40,7 @@ def test_origin_skill_has_trigger_metadata_and_safe_workflow():
     assert 'backend="python"' in text
     assert "Never silently fall back" in text
     assert "origin_plan_workflow" in text
+    assert "origin_run_task" in text
     assert "origin_execute_workflow" in text
     assert "origin_workflow_status" in text
     assert "origin_resume_workflow" in text
@@ -50,3 +51,6 @@ def test_origin_skill_has_trigger_metadata_and_safe_workflow():
     assert "dderivative" in text
     assert "differentiate" in text
     assert "Do not change derivative semantics" in text
+    assert 'checkpoint_policy="auto"' in text
+    assert 'checkpoint_policy="phase"' in text
+    assert "Do not poll" in text

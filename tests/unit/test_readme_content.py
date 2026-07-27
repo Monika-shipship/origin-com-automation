@@ -99,16 +99,18 @@ def test_readmes_include_equivalent_independence_and_risk_disclaimers():
 def test_readmes_list_every_public_mcp_tool():
     tool_names = TOOL_NAME.findall(_read(SERVER))
 
-    assert len(tool_names) == 51
+    assert len(tool_names) == 52
     for text in (_read(ENGLISH), _read(CHINESE)):
         missing = [name for name in tool_names if name not in text]
         assert missing == []
 
 
-def test_readmes_document_the_same_030_workflow_contract():
+def test_readmes_document_the_same_031_balanced_workflow_contract():
     for text in (_read(ENGLISH), _read(CHINESE)):
         for required in [
             "0.3.0",
+            "0.3.1",
+            "origin_run_task",
             "origin_plan_workflow",
             "origin_execute_workflow",
             "origin_workflow_status",
@@ -123,15 +125,18 @@ def test_readmes_document_the_same_030_workflow_contract():
             "dderivative",
             "differentiate",
             "CHANGELOG.md",
+            "docs/VALIDATION-0.3.1.md",
         ]:
             assert required in text
+        assert "checkpoint_policy=\"auto\"" in text
+        assert "checkpoint_policy=\"phase\"" in text
 
 
 def test_changelog_covers_every_public_release():
     changelog = ROOT / "CHANGELOG.md"
     assert changelog.is_file()
     text = _read(changelog)
-    for version in ["0.1.0", "0.2.0", "0.2.1", "0.3.0"]:
+    for version in ["0.1.0", "0.2.0", "0.2.1", "0.3.0", "0.3.1"]:
         assert f"## [{version}]" in text
     for heading in ["### Added", "### Changed", "### Safety", "### Validation", "### Known limits"]:
         assert heading in text
