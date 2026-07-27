@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .common import NativeValidationError, labtalk_range
+from .expressions import NativeExpressionError, validate_formula_expression
 
 
 RECALCULATION_MODES = {"none": 0, "auto": 1, "manual": 2}
@@ -104,6 +105,10 @@ def build_column_formula_plan(
 
     normalized_formula = formula.strip()
     normalized_script = before_script.strip()
+    try:
+        validate_formula_expression(normalized_formula)
+    except NativeExpressionError as exc:
+        raise NativeValidationError(str(exc), code=exc.code) from exc
     quoted_formula = _quoted_labtalk(
         normalized_formula, field="formula", allow_empty=False
     )

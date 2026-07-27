@@ -53,6 +53,10 @@ VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
         parameters={
             "iy": ParameterRule(RANGE, required=True),
             "order": ParameterRule((int,)),
+            "smooth": ParameterRule((int,)),
+            "poly": ParameterRule((int,)),
+            "npts": ParameterRule((int,)),
+            "plot": ParameterRule((int,)),
         },
         outputs=frozenset({"oy"}),
         operation_output="oy",
