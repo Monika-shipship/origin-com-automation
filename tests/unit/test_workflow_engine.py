@@ -121,14 +121,13 @@ def test_execute_calls_public_controller_methods_in_order_and_verifies_mutations
 
     assert result["success"] is True
     names = [name for name, _ in controller.calls]
-    assert names[:7] == [
+    assert names == [
         "start",
         "import_data",
-        "read_worksheet",
-        "save_project_copy",
         "run_analysis",
-        "save_project_copy",
         "create_graph",
+        "save_project_copy",
+        "shutdown",
     ]
     started_args = next(kwargs for name, kwargs in controller.calls if name == "start")
     assert started_args == {"visible": False, "attach": False, "exclusive": False}
@@ -138,21 +137,23 @@ def test_execute_calls_public_controller_methods_in_order_and_verifies_mutations
     assert analysis_args["worksheet_name"] == "[Data]input"
     graph_args = next(kwargs for name, kwargs in controller.calls if name == "create_graph")
     assert graph_args["roles"]["worksheet"] == "[Data]input"
-    assert names[-3:] == ["save_project_copy", "list_objects", "shutdown"]
+    assert names.count("save_project_copy") == 1
+    assert "read_worksheet" not in names
+    assert "list_objects" not in names
     assert result["objects"]["analysis:fit"]["operation_ref"] == "operation:fit"
     assert result["objects"]["graph:main"]["graph_ref"] == "graph:main"
     assert Path(result["ledger_path"]).is_file()
     ledger = json.loads(Path(result["ledger_path"]).read_text(encoding="utf-8"))
     assert ledger["digest"] == workflow_spec_digest(spec)
     assert all(item["state"] == "completed" for item in ledger["stages"])
-    assert ledger["checkpoints"]
+    assert ledger["checkpoints"] == []
     manifest_paths = [item["path"] for item in result["artifacts"] if item["kind"].startswith("workflow_manifest")]
-    assert manifest_paths and all(Path(path).is_file() for path in manifest_paths)
+    assert manifest_paths == []
     engine.close()
 
 
 def test_resume_skips_completed_mutations_and_opens_last_checkpoint(tmp_path):
-    spec = workflow_spec(tmp_path)
+    spec = workflow_spec(tmp_path, execution={"checkpoint_policy": "milestone"})
     first = FakeController(fail_stage="create_graph")
     engine = WorkflowEngine(lambda: first, task_manager=TaskManager())
     failed = engine.execute(
@@ -178,6 +179,35 @@ def test_resume_skips_completed_mutations_and_opens_last_checkpoint(tmp_path):
     assert "run_analysis" not in names
     assert names.count("create_graph") == 1
     assert names[-1] == "shutdown"
+    engine.close()
+
+
+def test_milestone_recovery_creates_only_one_checkpoint_after_analysis(tmp_path):
+    spec = workflow_spec(tmp_path, execution={"checkpoint_policy": "milestone"})
+    controller = FakeController()
+    engine = WorkflowEngine(lambda: controller, task_manager=TaskManager())
+
+    result = engine.execute(
+        spec,
+        expected_digest=workflow_spec_digest(spec),
+        idempotency_key="one-milestone",
+    )
+
+    assert result["success"] is True
+    checkpoint_calls = [
+        kwargs
+        for name, kwargs in controller.calls
+        if name == "save_project_copy" and "checkpoint-" in kwargs["target_path"]
+    ]
+    assert len(checkpoint_calls) == 1
+    assert "analysis" in checkpoint_calls[0]["target_path"]
+    final_saves = [
+        kwargs
+        for name, kwargs in controller.calls
+        if name == "save_project_copy" and kwargs["target_path"] == str(tmp_path / "result.opju")
+    ]
+    assert len(final_saves) == 1
+    assert len(result["checkpoints"]) == 1
     engine.close()
 
 

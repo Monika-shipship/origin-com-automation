@@ -279,6 +279,13 @@ class WorkflowEngine:
         plan = self.plan(spec)
         self._validate_plan(spec, expected_digest, plan)
         root, ledger_path = self._paths(spec, idempotency_key)
+        checkpoint_policy = str(
+            plan.safe_defaults.get(
+                "resolved_checkpoint_policy", spec.execution.checkpoint_policy
+            )
+        )
+        milestone_after = plan.safe_defaults.get("milestone_after")
+        eager_ledger_writes = checkpoint_policy in {"phase", "mutation"}
 
         if _resume:
             if not ledger_path.is_file():
@@ -351,12 +358,13 @@ class WorkflowEngine:
             if stage.target:
                 ledger["objects"][stage.target] = actual
             phase_dirty = phase_dirty or stage.mutation
-            _atomic_json(ledger_path, ledger)
+            if eager_ledger_writes:
+                _atomic_json(ledger_path, ledger)
             return True
 
         def checkpoint_after(phase: str) -> bool:
             nonlocal failed_stage, failure, phase_dirty
-            if spec.execution.checkpoint_policy == "none" or not phase_dirty:
+            if checkpoint_policy == "none" or not phase_dirty:
                 return True
             result = self._checkpoint(controller, root, ledger, phase)
             if not result.success:
@@ -419,32 +427,60 @@ class WorkflowEngine:
                         source_mode="linked" if source.import_mode != "snapshot" else "snapshot",
                     )
                     if imported.success:
-                        worksheet_ref = _result_data(imported).get("worksheet_ref") or source.worksheet_ref
-                        verified = controller.read_worksheet(worksheet_ref, data_format="variant")
-                        if not verified.success:
-                            result = verified
-                        else:
-                            values = _result_data(verified).get("values", [])
-                            if len(values) < spec.qa.minimum_rows:
+                        imported_data = _result_data(imported)
+                        worksheet_ref = imported_data.get("worksheet_ref") or source.worksheet_ref
+                        verified_rows = imported_data.get("verified_rows")
+                        if not isinstance(verified_rows, int):
+                            rows = imported_data.get("rows")
+                            verified_rows = rows if isinstance(rows, int) else None
+                        if verified_rows is not None:
+                            if verified_rows < spec.qa.minimum_rows:
                                 result = ResultEnvelope.fail(
                                     "WORKFLOW_DATA_VERIFICATION_FAILED",
                                     "Imported worksheet is below the required row count",
-                                    data={"worksheet_ref": worksheet_ref, "rows": len(values)},
+                                    data={"worksheet_ref": worksheet_ref, "rows": verified_rows},
                                 )
                             else:
                                 if source.worksheet_ref:
                                     worksheet_refs[source.worksheet_ref] = str(worksheet_ref)
                                 result = ResultEnvelope.ok(
-                                    {**_result_data(imported), "verified_rows": len(values)},
-                                    warnings=imported.warnings + verified.warnings,
-                                    artifacts=imported.artifacts + verified.artifacts,
+                                    {**imported_data, "verified_rows": verified_rows},
+                                    warnings=imported.warnings,
+                                    artifacts=imported.artifacts,
                                 )
+                        else:
+                            verified = controller.read_worksheet(
+                                worksheet_ref, data_format="variant"
+                            )
+                            if not verified.success:
+                                result = verified
+                            else:
+                                values = _result_data(verified).get("values", [])
+                                verified_rows = len(values)
+                                if verified_rows < spec.qa.minimum_rows:
+                                    result = ResultEnvelope.fail(
+                                        "WORKFLOW_DATA_VERIFICATION_FAILED",
+                                        "Imported worksheet is below the required row count",
+                                        data={
+                                            "worksheet_ref": worksheet_ref,
+                                            "rows": verified_rows,
+                                        },
+                                    )
+                                else:
+                                    if source.worksheet_ref:
+                                        worksheet_refs[source.worksheet_ref] = str(worksheet_ref)
+                                    result = ResultEnvelope.ok(
+                                        {
+                                            **imported_data,
+                                            "verified_rows": verified_rows,
+                                        },
+                                        warnings=imported.warnings + verified.warnings,
+                                        artifacts=imported.artifacts + verified.artifacts,
+                                    )
                     else:
                         result = imported
                 elif stage.id == "verify_data":
                     result = ResultEnvelope.ok({"verified_sources": len(spec.sources)})
-                    if not checkpoint_after("data"):
-                        break
                 elif stage.id.startswith("formula:"):
                     formula_id = stage.id.split(":", 1)[1]
                     formula = next(item for item in spec.formulas if item.id == formula_id)
@@ -506,11 +542,7 @@ class WorkflowEngine:
                         graph_name=plot.graph_name,
                         allow_unverified=plot.allow_unverified,
                     )
-                    if created.success:
-                        audited = controller.list_objects()
-                        result = created if audited.success else audited
-                    else:
-                        result = created
+                    result = created
                     if result.success:
                         graph_names[plot.id] = str(_result_data(result).get("graph_name") or plot.graph_name or plot.id)
                 elif stage.id == "save":
@@ -594,15 +626,33 @@ class WorkflowEngine:
 
                 if not finish_stage(stage, result):
                     break
-                if spec.execution.checkpoint_policy == "mutation" and stage.mutation:
+                if checkpoint_policy == "mutation" and stage.mutation:
                     if not checkpoint_after(stage.id.replace(":", "-")):
                         break
-                elif stage.id.startswith("analysis:") and not checkpoint_after("analysis"):
-                    break
-                elif stage.id.startswith("plot:") and not checkpoint_after("plot"):
-                    break
-                elif stage.id == "manifest" and not checkpoint_after("manifest"):
-                    break
+                elif checkpoint_policy == "phase":
+                    if stage.id == "verify_data" and not checkpoint_after("data"):
+                        break
+                    if stage.id.startswith("analysis:") and not checkpoint_after("analysis"):
+                        break
+                    if stage.id.startswith("plot:") and not checkpoint_after("plot"):
+                        break
+                    if stage.id == "manifest" and not checkpoint_after("manifest"):
+                        break
+                elif checkpoint_policy == "milestone":
+                    reached_milestone = (
+                        milestone_after == "data" and stage.id == "verify_data"
+                    ) or (
+                        milestone_after == "analysis"
+                        and stage.id.startswith("analysis:")
+                        and stage.id
+                        == next(
+                            candidate.id
+                            for candidate in reversed(plan.stages)
+                            if candidate.id.startswith("analysis:")
+                        )
+                    )
+                    if reached_milestone and not checkpoint_after(str(milestone_after)):
+                        break
         finally:
             if session_started:
                 shutdown_stage = next(stage for stage in plan.stages if stage.id == "shutdown")
