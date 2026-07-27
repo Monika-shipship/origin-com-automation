@@ -10,7 +10,9 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
+from .. import __version__
 from ..contracts import ResultEnvelope
+from .manifest import build_workflow_manifest, write_manifest_artifacts
 from .planner import PlannedStage, WorkflowPlan, compile_workflow
 from .spec import WorkflowSpec, workflow_spec_digest
 from .tasks import TaskManager
@@ -476,13 +478,63 @@ class WorkflowEngine:
                 elif stage.id == "reopen_audit":
                     result = controller.list_objects()
                 elif stage.id == "manifest":
-                    result = ResultEnvelope.ok(
-                        {
-                            "digest": plan.digest,
-                            "source_hashes": ledger["source_hashes"],
-                            "object_refs": sorted(ledger["objects"]),
-                        }
+                    manifest = build_workflow_manifest(
+                        spec,
+                        plan,
+                        ledger,
+                        plugin_version=__version__,
+                        origin_version=getattr(controller, "origin_version", plan.origin_version),
                     )
+                    local_formats = [
+                        item for item in spec.outputs.manifest_formats if item in {"json", "text"}
+                    ]
+                    artifacts = write_manifest_artifacts(
+                        manifest,
+                        root / "workflow-manifest",
+                        formats=local_formats,
+                    )
+                    warnings = []
+                    note_result: ResultEnvelope | None = None
+                    if "notes" in spec.outputs.manifest_formats:
+                        note_writer = getattr(controller, "manage_note", None)
+                        if callable(note_writer):
+                            note_result = note_writer(
+                                action="create",
+                                note_ref="Codex Workflow Manifest",
+                                text=json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+                                format="text",
+                            )
+                            if not note_result.success and note_result.error_code == "NOTE_ALREADY_EXISTS":
+                                note_result = note_writer(
+                                    action="write",
+                                    note_ref="Codex Workflow Manifest",
+                                    text=json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
+                                    format="text",
+                                )
+                            if note_result.success:
+                                persisted = controller.save_project_copy(
+                                    target_path=plan.resolved_project_output,
+                                    overwrite=True,
+                                )
+                                if not persisted.success:
+                                    note_result = persisted
+                        else:
+                            warnings.append(
+                                "Origin Notes manifest was not created because the controller does not expose manage_note"
+                            )
+                    if note_result is not None and not note_result.success:
+                        result = note_result
+                    else:
+                        result = ResultEnvelope.ok(
+                            {
+                                "digest": plan.digest,
+                                "source_hashes": ledger["source_hashes"],
+                                "object_refs": sorted(ledger["objects"]),
+                                "formats": list(spec.outputs.manifest_formats),
+                            },
+                            warnings=warnings + (note_result.warnings if note_result else []),
+                            artifacts=artifacts + (note_result.artifacts if note_result else []),
+                        )
                 else:
                     result = ResultEnvelope.fail(
                         "WORKFLOW_STAGE_UNKNOWN", f"Unsupported planned stage: {stage.id}"

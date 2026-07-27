@@ -24,6 +24,54 @@ class LayoutPlan:
     expected_layer_delta: int
 
 
+@dataclass(frozen=True)
+class GraphPresentationPlan:
+    legend_columns: int
+    major_tick_target: int
+    palette: tuple[str, ...]
+    markers: tuple[str, ...]
+    font_size: int
+    left_margin: float
+    right_margin: float
+    top_margin: float
+    bottom_margin: float
+
+
+def plan_graph_presentation(
+    *,
+    curve_count: int,
+    label_lengths: list[int],
+    scientific_axis: bool,
+) -> GraphPresentationPlan:
+    """Recommend deterministic layout values without emitting unverified Origin codes."""
+
+    if curve_count < 1:
+        raise GraphLayoutError("curve_count must be positive")
+    if len(label_lengths) != curve_count or any(value < 0 for value in label_lengths):
+        raise GraphLayoutError("label_lengths must contain one non-negative value per curve")
+    longest = max(label_lengths, default=0)
+    if curve_count <= 6 and longest <= 12:
+        legend_columns = 1
+    elif curve_count <= 16:
+        legend_columns = 2
+    else:
+        legend_columns = 3
+    tick_target = 5 if scientific_axis else 7
+    if curve_count > 12 or longest > 18:
+        tick_target -= 1
+    return GraphPresentationPlan(
+        legend_columns=legend_columns,
+        major_tick_target=max(3, tick_target),
+        palette=("#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9", "#F0E442", "#000000"),
+        markers=("circle", "square", "triangle_up", "diamond", "star", "hexagon", "cross", "triangle_down"),
+        font_size=9 if curve_count > 12 else 10,
+        left_margin=0.14,
+        right_margin=min(0.32, 0.12 + 0.015 * legend_columns + 0.004 * min(longest, 30)),
+        top_margin=0.10,
+        bottom_margin=0.15 if scientific_axis else 0.13,
+    )
+
+
 def build_layout_plan(
     *,
     action: str,
@@ -90,4 +138,3 @@ def build_layout_plan(
         command=command,
         expected_layer_delta=delta,
     )
-

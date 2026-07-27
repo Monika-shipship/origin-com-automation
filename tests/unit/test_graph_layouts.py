@@ -1,6 +1,6 @@
 import pytest
 
-from origin_com_automation.graphs.layout import GraphLayoutError, build_layout_plan
+from origin_com_automation.graphs.layout import GraphLayoutError, build_layout_plan, plan_graph_presentation
 
 
 def test_inset_and_dual_y_layouts_have_bounded_positions():
@@ -37,3 +37,13 @@ def test_grid_layout_requires_explicit_capacity():
             action="grid", graph_ref="Graph1", rows=1, columns=2, layer_refs=["1", "2", "3"]
         )
 
+
+def test_presentation_policy_scales_legend_ticks_and_margins():
+    compact = plan_graph_presentation(curve_count=3, label_lengths=[4, 6, 5], scientific_axis=False)
+    dense = plan_graph_presentation(curve_count=18, label_lengths=[22] * 18, scientific_axis=True)
+    assert compact.legend_columns == 1
+    assert dense.legend_columns > compact.legend_columns
+    assert dense.major_tick_target < compact.major_tick_target
+    assert dense.right_margin > compact.right_margin
+    assert len(dense.palette) >= 8
+    assert {"circle", "square", "star", "hexagon", "cross"} <= set(dense.markers)

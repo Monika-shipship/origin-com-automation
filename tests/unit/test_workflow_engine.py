@@ -138,6 +138,8 @@ def test_execute_calls_public_controller_methods_in_order_and_verifies_mutations
     assert ledger["digest"] == workflow_spec_digest(spec)
     assert all(item["state"] == "completed" for item in ledger["stages"])
     assert ledger["checkpoints"]
+    manifest_paths = [item["path"] for item in result["artifacts"] if item["kind"].startswith("workflow_manifest")]
+    assert manifest_paths and all(Path(path).is_file() for path in manifest_paths)
     engine.close()
 
 

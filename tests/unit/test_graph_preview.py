@@ -28,3 +28,15 @@ def test_transparent_png_reports_alpha_coverage(tmp_path):
     image.save(path)
     metrics = inspect_png(path)
     assert metrics["alpha_coverage"] == 0.5
+
+
+def test_png_qa_detects_edge_contact_whitespace_and_clipping(tmp_path):
+    edge = tmp_path / "edge.png"
+    image = Image.new("RGBA", (100, 100), "white")
+    ImageDraw.Draw(image).rectangle((0, 45, 99, 54), fill="black")
+    image.save(edge)
+    metrics = inspect_png(edge, edge_margin=2, maximum_whitespace_ratio=0.85)
+    assert metrics["content_touches_edge"] is True
+    assert metrics["whitespace_ratio"] == 0.9
+    assert metrics["suspected_clipping"] is True
+    assert metrics["qa_passed"] is False
