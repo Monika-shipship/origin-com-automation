@@ -214,9 +214,17 @@ class WorkflowController:
 class Context:
     def __init__(self):
         self.stages = []
+        self.completed = []
+        self.failed = []
 
     def stage(self, value, *, mutation=False):
         self.stages.append((value, mutation))
+
+    def complete_stage(self, *, actual=None):
+        self.completed.append(actual)
+
+    def fail_stage(self, error_code, error_message, *, actual=None):
+        self.failed.append((error_code, error_message, actual))
 
 
 def test_execute_figure_follows_compiled_key_path_and_always_shuts_down(tmp_path):
@@ -239,6 +247,7 @@ def test_execute_figure_follows_compiled_key_path_and_always_shuts_down(tmp_path
         "start", "import_data", "create_graph", "save_project_copy", "read_worksheet", "shutdown"
     ]
     assert result["completed_stages"][-1] == "shutdown"
+    assert context.completed
 
 
 def test_execute_figure_forwards_linked_and_native_defaults(tmp_path):
@@ -259,11 +268,12 @@ def test_execute_figure_forwards_linked_and_native_defaults(tmp_path):
     )
     controller = WorkflowController()
 
+    context = Context()
     result = execute_figure(
         controller,
         spec,
         expected_digest=figure_spec_digest(spec),
-        context=Context(),
+        context=context,
     )
 
     assert result["success"] is True
@@ -293,12 +303,14 @@ def test_execute_figure_stops_after_first_failed_stage(tmp_path):
             return ResultEnvelope.fail("PLOT_FAILED", "plot failed")
 
     controller = FailingController()
+    context = Context()
     result = execute_figure(
         controller,
         spec,
         expected_digest=figure_spec_digest(spec),
-        context=Context(),
+        context=context,
     )
     assert result["success"] is False
     assert result["failed_stage"] == "plot"
     assert [name for name, _ in controller.calls] == ["start", "import_data", "create_graph", "shutdown"]
+    assert context.failed == [("PLOT_FAILED", "plot failed", None)]

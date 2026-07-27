@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..contracts import ResultEnvelope
+from .engine import report_context_result
 from .figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
 
 
@@ -29,6 +30,7 @@ def execute_figure(
     )
     if not plan["executor_executable"]:
         raise FigureExecutionError("; ".join(plan["blockers"]))
+    report_context_result(context, ResultEnvelope.ok({"digest": digest}))
 
     completed: list[str] = ["preflight"]
     artifacts: list[dict[str, str]] = []
@@ -40,6 +42,7 @@ def execute_figure(
         nonlocal failed
         context.stage(stage, mutation=mutation)
         result: ResultEnvelope = function()
+        report_context_result(context, result)
         artifacts.extend(item.to_dict() for item in result.artifacts)
         warnings.extend(result.warnings)
         if result.success:
@@ -180,6 +183,7 @@ def execute_figure(
         if session_started:
             context.stage("shutdown", mutation=True)
             shutdown = controller.shutdown()
+            report_context_result(context, shutdown)
             artifacts.extend(item.to_dict() for item in shutdown.artifacts)
             warnings.extend(shutdown.warnings)
             if shutdown.success and "shutdown" not in completed:
