@@ -25,8 +25,8 @@ Typical uses include:
 - run an intent-aware, digest-approved workflow or a serialized batch of independent jobs.
 
 Release evidence is recorded in [0.2.0 validation](docs/VALIDATION-0.2.0.md) and
-[0.2.1 validation](docs/VALIDATION-0.2.1.md). See the complete [version history](CHANGELOG.md),
-including the local `0.3.0` workflow-system candidate.
+[0.2.1 validation](docs/VALIDATION-0.2.1.md), with the current candidate covered by
+[0.3.0 validation](docs/VALIDATION-0.3.0.md). See the complete [version history](CHANGELOG.md).
 
 <!-- section:requirements -->
 ## Requirements
@@ -237,7 +237,8 @@ capability-gated until their exact Origin-version behavior is verified.
 At workflow level, `origin_native_preferred` selects verified Origin scalar functions, column
 formulas, X-Functions, or Analysis Operations before considering any external route. Python is
 available only through `external_explicit`; an unavailable native route fails instead of silently
-falling back. For derivatives, the installed Origin 10.1 `differentiate` signature is registered
+falling back. For derivatives, the installed Origin 10.1 `differentiate` signature and high-level
+native operation persistence are verified
 with `iy`, `order`, `smooth`, `poly`, `npts`, `oy`, and `plot`. `dderivative` remains
 supported-unverified and requires explicit acceptance. Neither route may change the requested
 derivative algorithm, boundary convention, range, branch, or point placement.
@@ -445,7 +446,7 @@ codex plugin remove origin-com-automation@personal
 
 Verified on Origin `10.1.0.178`: safe owned lifecycle, read-only attachment, local linked CSV and
 Excel import, mixed Excel snapshot import, verified worksheet writes, persistent Origin formulas,
-native linear-fit operation recalculation, editable OPJU save/reopen, local connector refresh,
+native linear-fit and `differentiate` operation persistence, editable OPJU save/reopen, local connector refresh,
 Matrix read/write persistence, PNG Image Page import, Notes, Project Folder create/list/rename,
 scatter/line/column graphs, categorical styling and legend, preview pixel metrics, FigureSpec, and
 two-item serial batch execution.
@@ -490,3 +491,4 @@ Version history and test evidence:
 - [Complete changelog](CHANGELOG.md)
 - [Origin COM Automation 0.2.0 validation](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 validation](docs/VALIDATION-0.2.1.md)
+- [Origin COM Automation 0.3.0 validation](docs/VALIDATION-0.3.0.md)

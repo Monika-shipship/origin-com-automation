@@ -5,6 +5,7 @@ import pytest
 from mcp.server.fastmcp.exceptions import ToolError
 
 from origin_com_automation.contracts import ResultEnvelope
+import origin_com_automation.server as server_module
 from origin_com_automation.server import create_server
 
 
@@ -111,6 +112,36 @@ class FakeController:
     def manage_note(self, **kwargs):
         self.calls.append(("manage_note", kwargs))
         return ResultEnvelope.ok(kwargs)
+
+
+def test_default_server_gives_workflows_fresh_controllers_but_preserves_injected_controller(
+    monkeypatch,
+):
+    created = []
+    captured_factories = []
+
+    class CountingController(FakeController):
+        def __init__(self):
+            super().__init__()
+            created.append(self)
+
+    class CapturingWorkflowEngine:
+        def __init__(self, controller_factory, *, task_manager):
+            captured_factories.append(controller_factory)
+
+    monkeypatch.setattr(server_module, "OriginController", CountingController)
+    monkeypatch.setattr(server_module, "WorkflowEngine", CapturingWorkflowEngine)
+
+    create_server()
+    assert len(created) == 1
+    workflow_controller = captured_factories[-1]()
+    assert len(created) == 2
+    assert workflow_controller is created[-1]
+    assert workflow_controller is not created[0]
+
+    injected = FakeController()
+    create_server(controller=injected)
+    assert captured_factories[-1]() is injected
 
 
 def test_server_registers_the_complete_origin_tool_surface():

@@ -36,13 +36,14 @@ tests from real Origin COM tests.
 
 - Unit and real stdio MCP transport coverage validate planning, schemas, idempotency, checkpoints,
   audits, manifests, and graph QA without requiring Origin.
-- Real Origin validation status is recorded separately in `docs/VALIDATION-0.3.0.md`; fake COM
-  tests are never reported as real COM success.
+- Real Origin 10.1 validation proved the complete linked-data workflow, native auto-recalculating
+  `differentiate` operation, graph, PNG pixels, manifests, OPJU reopen, and owned-process exit.
+  Fake COM tests are never reported as real COM success.
 
 ### Known limits
 
-- The `differentiate` installed signature is known, but the complete high-level derivative
-  operation and interrupted-session resume path remain unverified until bounded live smoke tests.
+- Interrupted-session checkpoint resume remains supported-unverified until a bounded live
+  interruption test proves it without replaying a completed mutation.
 - Specialized graph families and template routes retain their per-capability verification status.
 
 ## [0.2.1] - 2026-07-26

@@ -61,6 +61,11 @@ CAPABILITIES: tuple[Capability, ...] = (
         notes="Default linear fit creates an auto-recalculating Origin fitlr Analysis Operation.",
     ),
     Capability(
+        "analysis.xfunction_differentiate",
+        "verified",
+        notes="Installed signature, structured auto-recalculating operation, save/reopen query, and no-Python workflow were verified on Origin 10.1.",
+    ),
+    Capability(
         "worksheet.origin_formula",
         "verified",
         notes="csetvalue F(x) formula, script, range, SVRM, and values verified on Origin 10.1.",

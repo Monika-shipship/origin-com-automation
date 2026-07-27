@@ -112,7 +112,12 @@ def _scientific_decisions(spec: WorkflowSpec) -> list[dict[str, Any]]:
                 _decision(f"{prefix}.model", "Provide the exact nonlinear fit model")
             )
     seen: set[str] = set()
-    return [item for item in decisions if not (item["field"] in seen or seen.add(item["field"]))]
+    unique: list[dict[str, Any]] = []
+    for item in decisions:
+        if item["field"] not in seen:
+            seen.add(item["field"])
+            unique.append(item)
+    return unique
 
 
 def _idempotency_key(digest: str, stage_id: str, target: str | None) -> str:
@@ -330,6 +335,7 @@ def compile_workflow(
         )
         for plot in spec.plots
     )
+    stages.append(_stage(digest, "manifest", mutation=True, target="manifest:workflow"))
     stages.append(_stage(digest, "save", mutation=True, target="project:output"))
     stages.extend(
         _stage(
@@ -343,7 +349,6 @@ def compile_workflow(
     stages.extend(
         [
             _stage(digest, "reopen_audit", mutation=False),
-            _stage(digest, "manifest", mutation=True, target="manifest:workflow"),
             _stage(digest, "shutdown", mutation=True, target="session:owned"),
         ]
     )

@@ -31,9 +31,9 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 - 导出 PNG、TIFF、PDF 或 SVG，并检查图片是否为空、尺寸是否合理；
 - 使用带意图理解、摘要审批和结果验证的高级工作流，或串行执行批量任务。
 
-版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)和
-[0.2.1 验证报告](docs/VALIDATION-0.2.1.md)。包括本地 `0.3.0` 候选版在内的每版变化见
-[完整版本历史](CHANGELOG.md)。
+版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)、
+[0.2.1 验证报告](docs/VALIDATION-0.2.1.md)和当前候选版的
+[0.3.0 验证报告](docs/VALIDATION-0.3.0.md)。每版变化见[完整版本历史](CHANGELOG.md)。
 
 <!-- section:requirements -->
 ## 运行环境
@@ -228,7 +228,8 @@ NumPy/SciPy 分析，也不会把外部结果粘贴回表格后冒充 Origin 原
 
 工作流层使用 `origin_native_preferred`：优先选择已验证的 Origin 标量函数、列公式、X-Function
 或 Analysis Operation。只有用户显式选择 `external_explicit` 才允许 Python；原生路线不可用时
-会失败，不会静默降级。对于导数，本机 Origin 10.1 的 `differentiate` 参数签名已经登记，包含
+会失败，不会静默降级。对于导数，本机 Origin 10.1 的 `differentiate` 参数签名和高层原生
+Operation 持久化已经验证，包含
 `iy`、`order`、`smooth`、`poly`、`npts`、`oy` 和 `plot`；`dderivative` 仍属于
 supported-unverified，必须明确接受后才能使用。无论选择哪条路线，都不能改变用户指定的导数
 算法、边界约定、数据范围、扫描分支或结果点位置。
@@ -419,7 +420,7 @@ codex plugin remove origin-com-automation@personal
 ## 已验证范围与已知限制
 
 已在 Origin `10.1.0.178` 验证：owned 生命周期、只读附加、本地 CSV/Excel 连接导入、混合 Excel
-snapshot、表格写入回读、持久化 Origin 公式、原生线性拟合 Operation 重算、OPJU 保存重开、本地
+snapshot、表格写入回读、持久化 Origin 公式、原生线性拟合和 `differentiate` Operation 持久化、OPJU 保存重开、本地
 Connector 刷新、Matrix 读写持久化、PNG Image Page 导入、Notes、Project Folder 创建/列出/重命名、
 散点/折线/柱状图、分类样式和图例、图形像素预览、FigureSpec 和双任务串行批处理。
 
@@ -459,3 +460,4 @@ LICENSE 文件为准。
 - [完整更新记录](CHANGELOG.md)
 - [Origin COM Automation 0.2.0 验证报告](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 验证报告](docs/VALIDATION-0.2.1.md)
+- [Origin COM Automation 0.3.0 验证报告](docs/VALIDATION-0.3.0.md)

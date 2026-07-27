@@ -104,7 +104,9 @@ class AnalysisOptions(StrictOptions):
     polyorder: int | None = None
     window: int | None = None
     order: int | None = None
-    derivative_method: Literal["gradient", "forward", "backward", "central"] | None = None
+    derivative_method: Literal[
+        "gradient", "forward", "backward", "central", "differentiate", "dderivative"
+    ] | None = None
     edge_order: Literal[1, 2] | None = None
     prominence: float | None = None
     distance: float | None = None
@@ -294,13 +296,20 @@ def create_server(
     controller_box = {"active": initial_controller}
     workflow_tasks = TaskManager(max_results=100)
 
-    workflow_engine = WorkflowEngine(
-        lambda: active_controller(),
-        task_manager=workflow_tasks,
-    )
-
     def active_controller() -> OriginController:
         return controller_box["active"]
+
+    if controller_factory is not None:
+        workflow_controller_factory = controller_factory
+    elif controller is not None:
+        workflow_controller_factory = active_controller
+    else:
+        workflow_controller_factory = OriginController
+
+    workflow_engine = WorkflowEngine(
+        workflow_controller_factory,
+        task_manager=workflow_tasks,
+    )
 
     registered_tools: list[Tool] = []
 

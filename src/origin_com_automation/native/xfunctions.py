@@ -83,6 +83,7 @@ VERIFIED_XFUNCTIONS: dict[str, XFunctionSpec] = {
 
 NATIVE_ANALYSIS_XFUNCTIONS = {
     "linear_fit": "fitlr",
+    "derivative": "differentiate",
     "fft": "fft1",
 }
 

@@ -1,8 +1,26 @@
 import json
 import subprocess
+import ast
+import tomllib
 from pathlib import Path
 
 from scripts.release_audit import audit_repository
+
+
+def test_repository_release_versions_are_030():
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((root / ".codex-plugin/plugin.json").read_text(encoding="utf-8"))
+    project = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    tree = ast.parse((root / "src/origin_com_automation/__init__.py").read_text(encoding="utf-8"))
+    runtime = next(
+        node.value.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        and any(isinstance(target, ast.Name) and target.id == "__version__" for target in node.targets)
+    )
+    assert manifest["version"].split("+", 1)[0] == "0.3.0"
+    assert project["project"]["version"] == "0.3.0"
+    assert runtime == "0.3.0"
 
 
 def _run(root: Path, *args: str) -> None:

@@ -4956,6 +4956,43 @@ class OriginController:
                         create_operation=create_operation,
                         recalculate_mode=recalculate_mode,
                     )
+                elif method == "derivative" and set(native_options) <= {
+                    "order",
+                    "derivative_method",
+                    "edge_order",
+                }:
+                    derivative_method = str(
+                        native_options.get("derivative_method", "")
+                    ).strip().lower()
+                    if derivative_method != "differentiate":
+                        return ResultEnvelope.fail(
+                            "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
+                            "The verified native derivative route requires derivative_method=differentiate",
+                            data={
+                                "requested_method": derivative_method or None,
+                                "verified_method": "differentiate",
+                                "python_fallback_attempted": False,
+                            },
+                        )
+                    if "edge_order" in native_options:
+                        return ResultEnvelope.fail(
+                            "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
+                            "differentiate does not expose the Python gradient edge_order semantic",
+                        )
+                    plan = build_xfunction_plan(
+                        "differentiate",
+                        {
+                            "iy": RangeRef(
+                                f"{worksheet_ref}!({x_column},{y_column})"
+                            ),
+                            "order": int(native_options.get("order", 1)),
+                            "smooth": 0,
+                            "plot": 0,
+                        },
+                        outputs={"oy": OutputRef("<new>")},
+                        create_operation=create_operation,
+                        recalculate_mode=recalculate_mode,
+                    )
                 else:
                     return ResultEnvelope.fail(
                         "ORIGIN_NATIVE_METHOD_UNAVAILABLE",

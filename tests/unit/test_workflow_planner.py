@@ -107,3 +107,5 @@ def test_idempotency_keys_are_stable_for_same_plan(tmp_path: Path):
     assert [stage.idempotency_key for stage in first.stages] == [
         stage.idempotency_key for stage in second.stages
     ]
+    stage_ids = [stage.id for stage in first.stages]
+    assert stage_ids.index("manifest") < stage_ids.index("save")

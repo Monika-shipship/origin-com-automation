@@ -6,7 +6,6 @@ import hashlib
 import json
 import os
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Callable
 
@@ -42,6 +41,14 @@ def _sha256(path: Path) -> str:
         for chunk in iter(lambda: handle.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
+
+
+def _import_target_name(worksheet_ref: str | None, source_id: str) -> str:
+    if worksheet_ref and worksheet_ref.startswith("[") and "]" in worksheet_ref:
+        page = worksheet_ref[1 : worksheet_ref.index("]")].strip()
+        if page:
+            return page
+    return (worksheet_ref or source_id).strip()
 
 
 def report_context_result(context: Any, result: ResultEnvelope) -> None:
@@ -310,6 +317,15 @@ class WorkflowEngine:
             for key, value in ledger["objects"].items()
             if key.startswith("graph:") and isinstance(value, dict)
         }
+        worksheet_refs: dict[str, str] = {}
+        for source in spec.sources:
+            observed = ledger["objects"].get(f"worksheet:{source.id}", {})
+            actual_ref = observed.get("worksheet_ref") if isinstance(observed, dict) else None
+            if source.worksheet_ref and actual_ref:
+                worksheet_refs[source.worksheet_ref] = str(actual_ref)
+
+        def resolve_worksheet(value: str) -> str:
+            return worksheet_refs.get(value, value)
 
         def finish_stage(stage: PlannedStage, result: ResultEnvelope) -> bool:
             nonlocal failed_stage, failure, phase_dirty
@@ -375,7 +391,7 @@ class WorkflowEngine:
                 if stage.id == "preflight":
                     result = ResultEnvelope.ok({"digest": plan.digest, "source_hashes": ledger["source_hashes"]})
                 elif stage.id == "start":
-                    result = controller.start(visible=spec.visible, attach=False, exclusive=True)
+                    result = controller.start(visible=spec.visible, attach=False, exclusive=False)
                     if result.success:
                         session_started = bool(_result_data(result).get("owned"))
                         if not session_started:
@@ -396,7 +412,7 @@ class WorkflowEngine:
                     source = next(item for item in spec.sources if item.id == source_id)
                     imported = controller.import_data(
                         file_path=source.path,
-                        worksheet_name=source.worksheet_ref,
+                        worksheet_name=_import_target_name(source.worksheet_ref, source.id),
                         sheet_name=source.sheet_name,
                         has_header=source.has_header,
                         target_mode="new_workbook",
@@ -416,6 +432,8 @@ class WorkflowEngine:
                                     data={"worksheet_ref": worksheet_ref, "rows": len(values)},
                                 )
                             else:
+                                if source.worksheet_ref:
+                                    worksheet_refs[source.worksheet_ref] = str(worksheet_ref)
                                 result = ResultEnvelope.ok(
                                     {**_result_data(imported), "verified_rows": len(values)},
                                     warnings=imported.warnings + verified.warnings,
@@ -435,7 +453,7 @@ class WorkflowEngine:
                         arguments = ",".join(str(value) for value in formula.arguments.values())
                         expression = f"{formula.native_function}({arguments})"
                     result = controller.set_column_formula(
-                        worksheet_name=formula.worksheet_ref,
+                        worksheet_ref=resolve_worksheet(formula.worksheet_ref),
                         column=formula.column,
                         formula=expression,
                         recalculate_mode=formula.recalculate_mode,
@@ -446,13 +464,24 @@ class WorkflowEngine:
                     outputs = []
                     result = ResultEnvelope.ok({})
                     for y_column in analysis.y_columns:
+                        analysis_options = dict(analysis.options)
+                        if analysis.method.strip().lower() == "derivative":
+                            if spec.scientific_contract.derivative_method is not None:
+                                analysis_options.setdefault(
+                                    "derivative_method",
+                                    spec.scientific_contract.derivative_method,
+                                )
+                            if spec.scientific_contract.derivative_order is not None:
+                                analysis_options.setdefault(
+                                    "order", spec.scientific_contract.derivative_order
+                                )
                         candidate = controller.run_analysis(
-                            worksheet_name=analysis.worksheet_ref,
+                            worksheet_name=resolve_worksheet(analysis.worksheet_ref),
                             method=analysis.method,
                             x_column=analysis.x_column,
                             y_column=y_column,
                             options={
-                                **analysis.options,
+                                **analysis_options,
                                 "backend": "python" if analysis.backend_policy == "external_explicit" else "origin_native",
                                 "create_operation": analysis.create_operation,
                                 "recalculate_mode": analysis.recalculate_mode,
@@ -467,9 +496,13 @@ class WorkflowEngine:
                 elif stage.id.startswith("plot:"):
                     plot_id = stage.id.split(":", 1)[1]
                     plot = next(item for item in spec.plots if item.id == plot_id)
+                    roles = dict(plot.roles)
+                    worksheet_role = roles.get("worksheet")
+                    if isinstance(worksheet_role, str):
+                        roles["worksheet"] = resolve_worksheet(worksheet_role)
                     created = controller.create_graph(
                         graph_type=plot.graph_type,
-                        roles=plot.roles,
+                        roles=roles,
                         graph_name=plot.graph_name,
                         allow_unverified=plot.allow_unverified,
                     )
@@ -537,13 +570,6 @@ class WorkflowEngine:
                                     text=json.dumps(manifest, ensure_ascii=False, indent=2, sort_keys=True),
                                     format="text",
                                 )
-                            if note_result.success:
-                                persisted = controller.save_project_copy(
-                                    target_path=plan.resolved_project_output,
-                                    overwrite=True,
-                                )
-                                if not persisted.success:
-                                    note_result = persisted
                         else:
                             warnings.append(
                                 "Origin Notes manifest was not created because the controller does not expose manage_note"

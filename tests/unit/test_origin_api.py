@@ -643,6 +643,39 @@ def test_named_columns_accept_origin_data_object_indices():
     assert result.data["result"]["slope"] == pytest.approx(1.0)
 
 
+def test_native_derivative_uses_verified_differentiate_operation_without_python():
+    app = FakeOriginApp()
+    app.lt_strings["differentiate.oy$"] = "[Book1]Derivative!A:B"
+    snapshots = iter([set(), {101}])
+    controller = OriginController(
+        worker=InlineWorker(),
+        dispatch_factory=lambda progid, attach: app,
+        process_snapshot=lambda: next(snapshots),
+    )
+    assert controller.start(progid="Origin.Application").success
+
+    result = controller.run_analysis(
+        worksheet_name="[Book1]Sheet1",
+        method="derivative",
+        x_column="A",
+        y_column="B",
+        options={
+            "backend": "origin_native",
+            "derivative_method": "differentiate",
+            "order": 1,
+            "create_operation": True,
+            "recalculate_mode": "auto",
+        },
+    )
+
+    assert result.success is True
+    assert result.data["xfunction"] == "differentiate"
+    assert result.data["native_operation_created"] is True
+    assert result.data["python_fallback_attempted"] is False
+    assert app.execute_scripts[-1].startswith("differentiate -r 1 ")
+    assert "iy:=[Book1]Sheet1!(A,B)" in app.execute_scripts[-1]
+
+
 def test_analysis_applies_explicit_row_range_filters_and_order():
     app = FakeOriginApp()
     app.sheet_data = ((0, 0), (1, 1), (2, 4), (3, 9))

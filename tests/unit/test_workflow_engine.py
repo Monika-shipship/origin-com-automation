@@ -61,7 +61,7 @@ class FakeController:
     def import_data(self, **kwargs):
         return self._result(
             "import_data",
-            {"worksheet_ref": "[Data]Sheet1", "rows": 2, "non_empty_counts": [2, 2]},
+            {"worksheet_ref": "[Data]input", "rows": 2, "non_empty_counts": [2, 2]},
             **kwargs,
         )
 
@@ -130,7 +130,15 @@ def test_execute_calls_public_controller_methods_in_order_and_verifies_mutations
         "save_project_copy",
         "create_graph",
     ]
-    assert names[-3:] == ["list_objects", "save_project_copy", "shutdown"]
+    started_args = next(kwargs for name, kwargs in controller.calls if name == "start")
+    assert started_args == {"visible": False, "attach": False, "exclusive": False}
+    imported_args = next(kwargs for name, kwargs in controller.calls if name == "import_data")
+    assert imported_args["worksheet_name"] == "Data"
+    analysis_args = next(kwargs for name, kwargs in controller.calls if name == "run_analysis")
+    assert analysis_args["worksheet_name"] == "[Data]input"
+    graph_args = next(kwargs for name, kwargs in controller.calls if name == "create_graph")
+    assert graph_args["roles"]["worksheet"] == "[Data]input"
+    assert names[-3:] == ["save_project_copy", "list_objects", "shutdown"]
     assert result["objects"]["analysis:fit"]["operation_ref"] == "operation:fit"
     assert result["objects"]["graph:main"]["graph_ref"] == "graph:main"
     assert Path(result["ledger_path"]).is_file()
@@ -170,4 +178,38 @@ def test_resume_skips_completed_mutations_and_opens_last_checkpoint(tmp_path):
     assert "run_analysis" not in names
     assert names.count("create_graph") == 1
     assert names[-1] == "shutdown"
+    engine.close()
+
+
+def test_engine_forwards_scientific_native_derivative_contract(tmp_path):
+    spec = workflow_spec(
+        tmp_path,
+        intent="curve_analysis",
+        scientific_contract={
+            "branch": "all",
+            "derivative_method": "differentiate",
+            "derivative_order": 2,
+            "input_units": {"x": "V", "y": "A"},
+        },
+        analyses=[{
+            "id": "derivative",
+            "method": "derivative",
+            "worksheet_ref": "[Data]Sheet1",
+            "x_column": "A",
+            "y_columns": ["B"],
+        }],
+        plots=[],
+    )
+    controller = FakeController()
+    engine = WorkflowEngine(lambda: controller, task_manager=TaskManager())
+    result = engine.execute(
+        spec,
+        expected_digest=workflow_spec_digest(spec),
+        idempotency_key="native-derivative",
+    )
+    assert result["success"] is True
+    options = next(kwargs["options"] for name, kwargs in controller.calls if name == "run_analysis")
+    assert options["derivative_method"] == "differentiate"
+    assert options["order"] == 2
+    assert options["backend"] == "origin_native"
     engine.close()

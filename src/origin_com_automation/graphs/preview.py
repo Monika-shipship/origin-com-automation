@@ -56,6 +56,11 @@ def inspect_png(
     total = pixels.shape[0] * pixels.shape[1]
     nonblank_ratio = float(np.count_nonzero(nonblank) / total)
     whitespace_ratio = 1.0 - nonblank_ratio
+    bbox_coverage = 0.0
+    if bbox:
+        bbox_coverage = float(
+            ((bbox[2] - bbox[0] + 1) * (bbox[3] - bbox[1] + 1)) / total
+        )
     touches_edge = bool(
         bbox
         and (
@@ -65,7 +70,9 @@ def inspect_png(
             or bbox[3] >= image.height - 1 - edge_margin
         )
     )
-    extreme_whitespace = bool(coordinates.size and whitespace_ratio > maximum_whitespace_ratio)
+    extreme_whitespace = bool(
+        coordinates.size and bbox_coverage < (1.0 - maximum_whitespace_ratio)
+    )
     suspected_clipping = touches_edge or extreme_whitespace
     qa_warnings = []
     if touches_edge:
@@ -84,6 +91,7 @@ def inspect_png(
         "expected_color_pixels": expected_counts,
         "file_size": source.stat().st_size,
         "whitespace_ratio": whitespace_ratio,
+        "content_bbox_coverage": bbox_coverage,
         "content_touches_edge": touches_edge,
         "suspected_clipping": suspected_clipping,
         "qa_passed": bool(coordinates.size) and not suspected_clipping,

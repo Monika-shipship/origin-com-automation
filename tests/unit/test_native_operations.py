@@ -379,7 +379,7 @@ def test_controller_rejects_unmapped_native_analysis_method_without_python_fallb
     assert result.success is False
     assert result.error_code == "ORIGIN_NATIVE_METHOD_UNAVAILABLE"
     assert result.data["requested_method"] == "pca"
-    assert result.data["verified_methods"] == ["fft", "linear_fit"]
+    assert result.data["verified_methods"] == ["derivative", "fft", "linear_fit"]
     assert app.scripts == []
     assert python_calls == []
 

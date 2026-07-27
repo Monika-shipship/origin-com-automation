@@ -40,3 +40,15 @@ def test_png_qa_detects_edge_contact_whitespace_and_clipping(tmp_path):
     assert metrics["whitespace_ratio"] == 0.9
     assert metrics["suspected_clipping"] is True
     assert metrics["qa_passed"] is False
+
+
+def test_sparse_scientific_plot_uses_bbox_coverage_not_ink_density(tmp_path):
+    path = tmp_path / "sparse-plot.png"
+    image = Image.new("RGBA", (100, 100), "white")
+    ImageDraw.Draw(image).rectangle((10, 10, 90, 90), outline="black", width=1)
+    image.save(path)
+    metrics = inspect_png(path)
+    assert metrics["nonblank_ratio"] < 0.05
+    assert metrics["content_bbox_coverage"] > 0.6
+    assert metrics["suspected_clipping"] is False
+    assert metrics["qa_passed"] is True
