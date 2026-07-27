@@ -150,6 +150,7 @@ def compile_workflow(
     spec: WorkflowSpec,
     *,
     origin_version: str | None,
+    batch_item_count: int = 1,
 ) -> WorkflowPlan:
     """Inspect and compile a workflow without activating Origin or accepting a controller."""
 
@@ -278,12 +279,11 @@ def compile_workflow(
                 "graph_type": plot.graph_type,
             }
         )
-    expected_objects.extend(
-        [
-            {"logical_id": "project:output", "kind": "project", "path": str(output)},
-            {"logical_id": "manifest:workflow", "kind": "manifest"},
-        ]
+    expected_objects.append(
+        {"logical_id": "project:output", "kind": "project", "path": str(output)}
     )
+    if spec.outputs.manifest_formats:
+        expected_objects.append({"logical_id": "manifest:workflow", "kind": "manifest"})
     for export in spec.outputs.exports:
         expected_objects.append(
             {
@@ -335,7 +335,8 @@ def compile_workflow(
         )
         for plot in spec.plots
     )
-    stages.append(_stage(digest, "manifest", mutation=True, target="manifest:workflow"))
+    if spec.outputs.manifest_formats:
+        stages.append(_stage(digest, "manifest", mutation=True, target="manifest:workflow"))
     stages.append(_stage(digest, "save", mutation=True, target="project:output"))
     stages.extend(
         _stage(
@@ -346,12 +347,39 @@ def compile_workflow(
         )
         for export in spec.outputs.exports
     )
-    stages.extend(
-        [
-            _stage(digest, "reopen_audit", mutation=False),
-            _stage(digest, "shutdown", mutation=True, target="session:owned"),
-        ]
+    if spec.qa.reopen_project:
+        stages.append(_stage(digest, "reopen_audit", mutation=False))
+    stages.append(_stage(digest, "shutdown", mutation=True, target="session:owned"))
+
+    source_total_bytes = sum(
+        Path(source.path).expanduser().resolve().stat().st_size
+        for source in spec.sources
+        if Path(source.path).expanduser().resolve().is_file()
     )
+    analysis_invocations = sum(len(item.y_columns) for item in spec.analyses)
+    auto_milestone = (
+        len(spec.sources) >= 2
+        or analysis_invocations >= 3
+        or (source_total_bytes >= 100 * 1024 * 1024 and bool(spec.analyses))
+        or batch_item_count >= 3
+    )
+    requested_checkpoint_policy = spec.execution.checkpoint_policy
+    resolved_checkpoint_policy = (
+        "milestone"
+        if requested_checkpoint_policy == "auto" and auto_milestone
+        else "none"
+        if requested_checkpoint_policy == "auto"
+        else requested_checkpoint_policy
+    )
+    milestone_after = None
+    if resolved_checkpoint_policy == "milestone":
+        milestone_after = (
+            "data"
+            if len(spec.sources) >= 2 or source_total_bytes >= 100 * 1024 * 1024
+            else "analysis"
+            if spec.analyses
+            else "data"
+        )
 
     required = _scientific_decisions(spec)
     capabilities = capability_report(origin_version)
@@ -368,9 +396,14 @@ def compile_workflow(
             "overwrite": spec.outputs.overwrite,
             "backend_policy": spec.execution.backend_policy,
             "checkpoint_policy": spec.execution.checkpoint_policy,
+            "resolved_checkpoint_policy": resolved_checkpoint_policy,
+            "milestone_after": milestone_after,
         },
         derived_values={
             "resolved_project_output": str(output),
+            "source_total_bytes": source_total_bytes,
+            "analysis_invocations": analysis_invocations,
+            "batch_item_count": batch_item_count,
             "source_hashes": {
                 item["source_id"]: item["source_sha256"] for item in previews
             },

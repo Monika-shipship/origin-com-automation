@@ -108,4 +108,57 @@ def test_idempotency_keys_are_stable_for_same_plan(tmp_path: Path):
         stage.idempotency_key for stage in second.stages
     ]
     stage_ids = [stage.id for stage in first.stages]
-    assert stage_ids.index("manifest") < stage_ids.index("save")
+    assert "manifest" not in stage_ids
+    assert "reopen_audit" not in stage_ids
+    assert first.safe_defaults["checkpoint_policy"] == "auto"
+    assert first.safe_defaults["resolved_checkpoint_policy"] == "none"
+    assert first.safe_defaults["milestone_after"] is None
+
+
+def test_auto_recovery_selects_one_analysis_milestone_for_multiple_native_calls(
+    tmp_path: Path,
+):
+    base = _derivative_spec(
+        tmp_path,
+        scientific_contract={
+            "branch": "all",
+            "derivative_method": "differentiate",
+            "derivative_order": 1,
+            "input_units": {"x": "V", "y": "A"},
+        },
+    )
+    analyses = [
+        {**base.analyses[0].model_dump(mode="json"), "id": f"d{index}"}
+        for index in range(3)
+    ]
+    spec = WorkflowSpec.model_validate(
+        {**base.model_dump(mode="json"), "analyses": analyses}
+    )
+
+    plan = compile_workflow(spec, origin_version="10.1.0.178")
+
+    assert plan.safe_defaults["resolved_checkpoint_policy"] == "milestone"
+    assert plan.safe_defaults["milestone_after"] == "analysis"
+
+
+def test_auto_recovery_prefers_data_milestone_for_multiple_sources(tmp_path: Path):
+    spec = _derivative_spec(
+        tmp_path,
+        sources=[
+            {
+                "id": "first",
+                "path": str(tmp_path / "curve.csv"),
+                "worksheet_ref": "[First]Data",
+            },
+            {
+                "id": "second",
+                "path": str(tmp_path / "curve.csv"),
+                "worksheet_ref": "[Second]Data",
+            },
+        ],
+    )
+
+    plan = compile_workflow(spec, origin_version=None)
+
+    assert plan.safe_defaults["resolved_checkpoint_policy"] == "milestone"
+    assert plan.safe_defaults["milestone_after"] == "data"

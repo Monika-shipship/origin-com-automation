@@ -56,6 +56,19 @@ def test_workflow_spec_has_native_fail_fast_non_overwrite_defaults(tmp_path: Pat
     assert spec.outputs.overwrite == "error"
     assert spec.analyses[0].create_operation is True
     assert spec.analyses[0].recalculate_mode == "auto"
+    assert spec.execution.checkpoint_policy == "auto"
+    assert spec.outputs.manifest_formats == []
+    assert spec.qa.reopen_project is False
+
+
+@pytest.mark.parametrize("policy", ["auto", "none", "milestone", "phase", "mutation"])
+def test_workflow_spec_accepts_balanced_and_legacy_recovery_policies(
+    tmp_path: Path,
+    policy: str,
+):
+    spec = _spec(tmp_path, execution={"checkpoint_policy": policy})
+
+    assert spec.execution.checkpoint_policy == policy
 
 
 def test_workflow_spec_forbids_unknown_fields(tmp_path: Path):

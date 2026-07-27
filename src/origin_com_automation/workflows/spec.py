@@ -158,9 +158,7 @@ class WorkflowOutputs(StrictModel):
     project_path: str
     overwrite: Literal["error", "replace"] = "error"
     exports: list[ExportSpec] = Field(default_factory=list)
-    manifest_formats: list[Literal["notes", "json", "text"]] = Field(
-        default_factory=lambda: ["notes", "json"]
-    )
+    manifest_formats: list[Literal["notes", "json", "text"]] = Field(default_factory=list)
 
 
 class ExecutionPolicy(StrictModel):
@@ -168,7 +166,7 @@ class ExecutionPolicy(StrictModel):
         "origin_native_only", "origin_native_preferred", "external_explicit"
     ] = "origin_native_preferred"
     fail_fast: bool = True
-    checkpoint_policy: Literal["none", "phase", "mutation"] = "phase"
+    checkpoint_policy: Literal["auto", "none", "milestone", "phase", "mutation"] = "auto"
     idempotency_key: str | None = None
 
 
@@ -179,7 +177,7 @@ class WorkflowQA(StrictModel):
     expected_colors: list[str] = Field(default_factory=list)
     require_connector: bool = True
     require_native_operations: bool = True
-    reopen_project: bool = True
+    reopen_project: bool = False
 
 
 class WorkflowSpec(StrictModel):
