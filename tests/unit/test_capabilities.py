@@ -26,3 +26,5 @@ def test_capabilities_expose_verified_editable_native_defaults():
     assert report["analysis.native_default_fitlr"]["status"] == "verified"
     assert report["analysis.python_explicit"]["status"] == "verified"
     assert "non-recalculating" in report["analysis.python_explicit"]["notes"]
+    assert report["workflow.intent_plan_execute"]["status"] == "verified"
+    assert report["workflow.resume_checkpoint"]["status"] == "supported_unverified"

@@ -152,6 +152,12 @@ def test_server_registers_the_complete_origin_tool_surface():
         "origin_view_graph",
         "origin_plan_figure",
         "origin_execute_figure",
+        "origin_plan_workflow",
+        "origin_execute_workflow",
+        "origin_workflow_status",
+        "origin_resume_workflow",
+        "origin_audit_result",
+        "origin_export_manifest",
         "origin_submit_batch",
         "origin_task_status",
         "origin_cancel_task",
@@ -199,6 +205,61 @@ def test_server_registers_the_complete_origin_tool_surface():
     ]:
         assert option_name in analysis_schema["properties"]
     assert all(tool.inputSchema.get("additionalProperties") is False for tool in tools)
+
+
+def test_high_level_workflow_schemas_are_expanded_and_execution_is_digest_bound(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n", encoding="utf-8")
+    controller = FakeController()
+    server = create_server(controller=controller)
+    tools = asyncio.run(server.list_tools())
+    schemas = {tool.name: tool.inputSchema for tool in tools}
+
+    for name in [
+        "origin_plan_workflow",
+        "origin_execute_workflow",
+        "origin_workflow_status",
+        "origin_resume_workflow",
+        "origin_audit_result",
+        "origin_export_manifest",
+    ]:
+        assert name in schemas
+        assert "$ref" not in json.dumps(schemas[name])
+
+    spec = {
+        "intent": "import_and_plot",
+        "sources": [{"id": "data", "path": str(source)}],
+        "scientific_contract": {"input_units": {"x": "V", "y": "A"}},
+        "outputs": {"project_path": str(tmp_path / "result.opju")},
+    }
+    planned = asyncio.run(server.call_tool("origin_plan_workflow", {"spec": spec}))
+    assert planned[1]["success"] is True
+    assert planned[1]["data"]["digest"]
+    assert controller.calls == []
+
+    execute = schemas["origin_execute_workflow"]["properties"]
+    assert {"spec", "plan_digest", "idempotency_key"} <= set(execute)
+    assert {"spec", "plan_digest", "idempotency_key"} <= set(
+        schemas["origin_execute_workflow"]["required"]
+    )
+
+
+def test_workflow_audit_uses_bounded_targets_and_standard_envelope(tmp_path):
+    artifact = tmp_path / "result.opju"
+    artifact.write_bytes(b"valid project")
+    server = create_server(controller=FakeController())
+    result = asyncio.run(
+        server.call_tool(
+            "origin_audit_result",
+            {"targets": [{"kind": "file", "ref": str(artifact), "expected": {"minimum_size": 8}}]},
+        )
+    )
+    assert result[1]["success"] is True
+    assert result[1]["data"]["summary"]["verified"] == 1
+    assert set(result[1]) == {
+        "success", "data", "warnings", "error_code", "error_message",
+        "artifacts", "duration_ms", "origin_version",
+    }
 
 
 def test_source_and_analysis_schemas_default_to_editable_origin_workflows():

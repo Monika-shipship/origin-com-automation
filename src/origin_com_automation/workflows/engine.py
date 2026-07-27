@@ -100,6 +100,32 @@ class WorkflowEngine:
             idempotency_key=idempotency_key,
         )
 
+    def submit_resume(
+        self,
+        spec: WorkflowSpec,
+        *,
+        expected_digest: str,
+        idempotency_key: str,
+    ) -> str:
+        _, ledger_path = self._paths(spec, idempotency_key)
+        if not ledger_path.is_file():
+            raise WorkflowExecutionError("workflow ledger does not exist")
+        ledger = json.loads(ledger_path.read_text(encoding="utf-8"))
+        attempt = str(ledger.get("updated_at", ledger_path.stat().st_mtime_ns))
+        resume_key = hashlib.sha256(
+            f"resume:{idempotency_key}:{attempt}".encode("utf-8")
+        ).hexdigest()
+        return self.tasks.submit(
+            "origin_workflow_resume",
+            lambda context: self.resume(
+                spec,
+                expected_digest=expected_digest,
+                idempotency_key=idempotency_key,
+                context=context,
+            ),
+            idempotency_key=resume_key,
+        )
+
     def status(self, task_id: str) -> dict[str, Any]:
         return self.tasks.status(task_id)
 

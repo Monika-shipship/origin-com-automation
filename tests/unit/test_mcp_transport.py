@@ -28,6 +28,9 @@ def test_real_stdio_transport_lists_expanded_tools_and_calls_health_check():
     by_name = {tool.name: tool for tool in tools.tools}
 
     assert "origin_recover_session" in by_name
+    assert "origin_plan_workflow" in by_name
+    assert "origin_execute_workflow" in by_name
+    assert "$ref" not in str(by_name["origin_plan_workflow"].inputSchema)
     graph_options = by_name["origin_configure_graph"].inputSchema["properties"]["options"]
     assert "properties" in graph_options
     assert "categorical_style" in graph_options["properties"]

@@ -29,6 +29,11 @@ from .knowledge import query_knowledge
 from .tools.health import health_check
 from .workflows.executor import execute_figure
 from .workflows.figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
+from .workflows.audit import AuditTarget, run_targeted_audit
+from .workflows.engine import WorkflowEngine, WorkflowExecutionError
+from .workflows.manifest import build_workflow_manifest, write_manifest_artifacts
+from .workflows.planner import compile_workflow
+from .workflows.spec import WorkflowSpec, workflow_spec_digest
 from .workflows.tasks import TaskManager
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
@@ -249,6 +254,12 @@ class WorksheetTransformOptions(StrictOptions):
     recalculate_mode: Literal["none", "auto", "manual"] = "auto"
 
 
+class AuditTargetInput(StrictOptions):
+    kind: Literal["worksheet", "connector", "formula", "operation", "graph", "file", "shutdown"]
+    ref: str
+    expected: dict[str, Any] = Field(default_factory=dict)
+
+
 def _inline_local_schema_refs(schema: dict[str, Any]) -> dict[str, Any]:
     definitions = schema.get("$defs", {})
 
@@ -283,6 +294,11 @@ def create_server(
     controller_box = {"active": initial_controller}
     workflow_tasks = TaskManager(max_results=100)
 
+    workflow_engine = WorkflowEngine(
+        lambda: active_controller(),
+        task_manager=workflow_tasks,
+    )
+
     def active_controller() -> OriginController:
         return controller_box["active"]
 
@@ -305,6 +321,11 @@ def create_server(
                 "origin_plan_figure",
                 "origin_execute_figure",
                 "origin_submit_batch",
+                "origin_plan_workflow",
+                "origin_execute_workflow",
+                "origin_resume_workflow",
+                "origin_audit_result",
+                "origin_export_manifest",
             }:
                 tool.parameters = _inline_local_schema_refs(tool.parameters)
             registered_tools.append(tool)
@@ -905,6 +926,166 @@ def create_server(
                 "plan_digest": plan_digest,
                 "next_tool": "origin_task_status",
             },
+            origin_version=version,
+        )
+
+    @strict_tool(name="origin_plan_workflow")
+    def origin_plan_workflow(spec: WorkflowSpec) -> ResultEnvelope:
+        """Compile one complete offline plan and return every missing scientific decision together."""
+        version = getattr(active_controller(), "origin_version", None) or getattr(
+            active_controller(), "_origin_version", None
+        )
+        try:
+            plan = workflow_engine.plan(spec, origin_version=version)
+        except Exception as exc:
+            return ResultEnvelope.fail("WORKFLOW_PLAN_FAILED", str(exc))
+        return ResultEnvelope.ok(plan.to_dict(), origin_version=version)
+
+    @strict_tool(name="origin_execute_workflow")
+    def origin_execute_workflow(
+        spec: WorkflowSpec,
+        plan_digest: str,
+        idempotency_key: str,
+    ) -> ResultEnvelope:
+        """Submit exactly one approved plan digest to the serialized Origin workflow queue."""
+        actual_digest = workflow_spec_digest(spec)
+        if actual_digest != plan_digest:
+            return ResultEnvelope.fail(
+                "WORKFLOW_PLAN_CHANGED",
+                "WorkflowSpec no longer matches the approved plan digest",
+                data={"expected_digest": plan_digest, "actual_digest": actual_digest},
+            )
+        version = getattr(active_controller(), "origin_version", None) or getattr(
+            active_controller(), "_origin_version", None
+        )
+        plan = compile_workflow(spec, origin_version=version)
+        if not plan.executor_executable:
+            return ResultEnvelope.fail(
+                "WORKFLOW_PREFLIGHT_BLOCKED",
+                "Workflow contains blockers or unresolved scientific decisions",
+                data=plan.to_dict(),
+            )
+        try:
+            task_id = workflow_engine.submit(
+                spec,
+                expected_digest=plan_digest,
+                idempotency_key=idempotency_key,
+            )
+        except (ValueError, WorkflowExecutionError) as exc:
+            return ResultEnvelope.fail(getattr(exc, "code", "WORKFLOW_SUBMIT_FAILED"), str(exc))
+        return ResultEnvelope.ok(
+            {
+                "task_id": task_id,
+                "state": "queued",
+                "plan_digest": plan_digest,
+                "idempotency_key": idempotency_key,
+                "next_tool": "origin_workflow_status",
+            },
+            origin_version=version,
+        )
+
+    @strict_tool(name="origin_workflow_status")
+    def origin_workflow_status(task_id: str) -> ResultEnvelope:
+        """Read the stage ledger, actual values, stable refs, and terminal state for one workflow task."""
+        try:
+            return ResultEnvelope.ok(workflow_engine.status(task_id))
+        except KeyError:
+            return ResultEnvelope.fail("WORKFLOW_TASK_NOT_FOUND", f"Workflow task not found: {task_id}")
+
+    @strict_tool(name="origin_resume_workflow")
+    def origin_resume_workflow(
+        spec: WorkflowSpec,
+        plan_digest: str,
+        idempotency_key: str,
+    ) -> ResultEnvelope:
+        """Resume at the first incomplete stage after verifying source and checkpoint hashes."""
+        if workflow_spec_digest(spec) != plan_digest:
+            return ResultEnvelope.fail(
+                "WORKFLOW_PLAN_CHANGED",
+                "WorkflowSpec no longer matches the approved plan digest",
+            )
+        try:
+            task_id = workflow_engine.submit_resume(
+                spec,
+                expected_digest=plan_digest,
+                idempotency_key=idempotency_key,
+            )
+        except (OSError, ValueError, WorkflowExecutionError) as exc:
+            return ResultEnvelope.fail(getattr(exc, "code", "WORKFLOW_RESUME_REJECTED"), str(exc))
+        return ResultEnvelope.ok(
+            {
+                "task_id": task_id,
+                "state": "queued",
+                "plan_digest": plan_digest,
+                "idempotency_key": idempotency_key,
+                "next_tool": "origin_workflow_status",
+            }
+        )
+
+    @strict_tool(name="origin_audit_result")
+    def origin_audit_result(targets: list[AuditTargetInput]) -> ResultEnvelope:
+        """Audit only explicitly named worksheets, connectors, operations, graphs, or files."""
+        try:
+            report = run_targeted_audit(
+                active_controller(),
+                [AuditTarget(**item.model_dump()) for item in targets],
+            )
+        except (OSError, ValueError) as exc:
+            return ResultEnvelope.fail("WORKFLOW_AUDIT_INVALID", str(exc))
+        if not report["success"]:
+            return ResultEnvelope.fail(
+                "WORKFLOW_AUDIT_FAILED",
+                "One or more requested result checks failed",
+                data=report,
+            )
+        return ResultEnvelope.ok(report)
+
+    @strict_tool(name="origin_export_manifest")
+    def origin_export_manifest(
+        spec: WorkflowSpec,
+        plan_digest: str,
+        ledger_path: str,
+        output_base: str | None = None,
+        formats: list[Literal["json", "text"]] | None = None,
+        redact_paths: bool = True,
+    ) -> ResultEnvelope:
+        """Export a canonical reproducibility manifest from a verified workflow ledger."""
+        actual_digest = workflow_spec_digest(spec)
+        if actual_digest != plan_digest:
+            return ResultEnvelope.fail("WORKFLOW_PLAN_CHANGED", "WorkflowSpec digest changed")
+        ledger_file = Path(ledger_path).expanduser().resolve()
+        try:
+            ledger = json.loads(ledger_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            return ResultEnvelope.fail("WORKFLOW_LEDGER_INVALID", str(exc))
+        if ledger.get("digest") != plan_digest:
+            return ResultEnvelope.fail("WORKFLOW_LEDGER_CHANGED", "Ledger digest does not match the approved plan")
+        version = getattr(active_controller(), "origin_version", None) or getattr(
+            active_controller(), "_origin_version", None
+        )
+        plan = compile_workflow(spec, origin_version=version)
+        from . import __version__
+
+        manifest = build_workflow_manifest(
+            spec,
+            plan,
+            ledger,
+            plugin_version=__version__,
+            origin_version=version,
+            redact_paths=redact_paths,
+        )
+        base = Path(output_base).expanduser().resolve() if output_base else ledger_file.with_name("workflow-manifest")
+        try:
+            artifacts = write_manifest_artifacts(
+                manifest,
+                base,
+                formats=formats or ["json", "text"],
+            )
+        except OSError as exc:
+            return ResultEnvelope.fail("WORKFLOW_MANIFEST_EXPORT_FAILED", str(exc))
+        return ResultEnvelope.ok(
+            {"manifest": manifest, "paths": [item.path for item in artifacts]},
+            artifacts=artifacts,
             origin_version=version,
         )
 

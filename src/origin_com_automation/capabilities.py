@@ -78,6 +78,18 @@ CAPABILITIES: tuple[Capability, ...] = (
     Capability("project.folders_notes", "verified", notes="Create, list, rename, save, and reopen; move/delete remain action-level limited."),
     Capability("workflow.figurespec", "verified", notes="Data-to-project route with editable OPJU, PNG export, QA, and shutdown."),
     Capability("workflow.serial_batch", "verified", notes="Two-item serialized FigureSpec smoke on Origin 10.1."),
+    Capability(
+        "workflow.intent_plan_execute",
+        "verified",
+        notes="Offline parameter contract, digest approval, fail-fast execution, and mutation readback are unit verified.",
+    ),
+    Capability(
+        "workflow.resume_checkpoint",
+        "supported_unverified",
+        notes="Atomic ledger and OPJU checkpoint hash validation are implemented; live interruption recovery awaits bounded Origin smoke proof.",
+    ),
+    Capability("workflow.targeted_audit", "verified", notes="Bounded target schemas and result classifications are unit verified."),
+    Capability("workflow.reproducibility_manifest", "verified", notes="Canonical redacted JSON and text artifacts are unit verified."),
 )
 
 
