@@ -24,8 +24,8 @@ Typical uses include:
 - export PNG, TIFF, PDF, or SVG and inspect the generated image;
 - run a validated FigureSpec or a serialized batch of independent jobs.
 
-Release evidence is recorded in [0.2.0 validation](docs/VALIDATION-0.2.0.md) and
-[0.2.1 validation](docs/VALIDATION-0.2.1.md).
+Release evidence is recorded in [0.2.0 validation](docs/VALIDATION-0.2.0.md),
+[0.2.1 validation](docs/VALIDATION-0.2.1.md), and [0.2.2 validation](docs/VALIDATION-0.2.2.md).
 
 <!-- section:requirements -->
 ## Requirements
@@ -40,9 +40,11 @@ The verified environment is Windows 11 x64, Python 3.13 x64, and Origin `10.1.0.
 Origin releases may work, but specialized behavior remains unverified until a version-specific
 live test proves the output and readback.
 
-The bootstrap creates a repository-local `.venv`. It does not install packages into the system
-Python environment. Dependencies include pywin32, MCP, Pydantic, NumPy/SciPy, OpenPyXL, Pillow,
-psutil, pandas, and xlrd.
+The bootstrap creates a version-scoped, non-editable runtime under
+`%LOCALAPPDATA%\OriginComAutomation\runtime\<plugin-version>`. It does not install packages into
+the system Python environment or import a repository-local `.venv`. A lock prevents concurrent
+Codex launches from creating a partial runtime. Dependencies include pywin32, MCP, Pydantic,
+NumPy/SciPy, OpenPyXL, Pillow, psutil, pandas, and xlrd.
 
 <!-- section:setup -->
 ## Installation
@@ -54,8 +56,8 @@ Clone or download the repository, open PowerShell in the repository root, and ru
 & '.\scripts\diagnose.ps1'
 ```
 
-The MCP server uses the relative interpreter declared in `.mcp.json`, so the source folder and its
-`.venv` stay portable together. Install or refresh the personal Codex plugin with:
+The MCP server uses `.mcp.json` to call `scripts/run_mcp.ps1`. The launcher resolves the manifest
+version and starts the matching external runtime. Install or refresh the personal Codex plugin with:
 
 ```powershell
 codex plugin add origin-com-automation@personal
@@ -462,3 +464,4 @@ Version history and test evidence:
 
 - [Origin COM Automation 0.2.0 validation](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 validation](docs/VALIDATION-0.2.1.md)
+- [Origin COM Automation 0.2.2 validation](docs/VALIDATION-0.2.2.md)

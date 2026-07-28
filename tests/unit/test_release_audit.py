@@ -84,6 +84,22 @@ def test_release_audit_detects_manifest_package_version_drift(tmp_path: Path):
     assert any(item["code"] == "version_mismatch" for item in report["errors"])
 
 
+def test_v022_release_metadata_and_runtime_documentation_are_consistent():
+    root = Path(__file__).resolve().parents[2]
+    manifest = json.loads((root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+    package = (root / "pyproject.toml").read_text(encoding="utf-8")
+    runtime = (root / "src" / "origin_com_automation" / "__init__.py").read_text(encoding="utf-8")
+    english = (root / "README.md").read_text(encoding="utf-8")
+    chinese = (root / "README.zh-CN.md").read_text(encoding="utf-8")
+
+    assert manifest["version"].startswith("0.2.2+")
+    assert 'version = "0.2.2"' in package
+    assert '__version__ = "0.2.2"' in runtime
+    assert "0.2.2" in english and "0.2.2" in chinese
+    assert "LOCALAPPDATA" in english and "LOCALAPPDATA" in chinese
+    assert (root / "CHANGELOG.md").is_file()
+
+
 def test_release_audit_detects_runtime_package_version_drift(tmp_path: Path):
     root = _repository(tmp_path)
     runtime = root / "src" / "origin_com_automation" / "__init__.py"

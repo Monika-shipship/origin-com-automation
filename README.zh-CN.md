@@ -31,8 +31,8 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 - 导出 PNG、TIFF、PDF 或 SVG，并检查图片是否为空、尺寸是否合理；
 - 使用 FigureSpec 描述一整套任务，或串行执行批量任务。
 
-版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)和
-[0.2.1 验证报告](docs/VALIDATION-0.2.1.md)。
+版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)、
+[0.2.1 验证报告](docs/VALIDATION-0.2.1.md) 和 [0.2.2 验证报告](docs/VALIDATION-0.2.2.md)。
 
 <!-- section:requirements -->
 ## 运行环境
@@ -47,7 +47,9 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 其他 Origin 版本可能可以运行，但涉及特定 X-Function、模板、图形或分析操作时，在完成对应版本
 的真实回读验证以前，只能标记为“支持但未验证”。
 
-安装脚本会在插件目录中创建独立的 `.venv`，不会把依赖安装到系统 Python。主要依赖包括
+安装脚本会在 `%LOCALAPPDATA%\OriginComAutomation\runtime\<plugin-version>` 创建按版本隔离的、
+非 editable 运行环境，不会把依赖安装到系统 Python，也不会从仓库内 `.venv` 加载代码。启动锁
+可以避免多个 Codex 任务同时创建半成品运行环境。主要依赖包括
 pywin32、MCP、Pydantic、NumPy/SciPy、OpenPyXL、Pillow、psutil、pandas 和 xlrd。
 
 <!-- section:setup -->
@@ -60,7 +62,7 @@ pywin32、MCP、Pydantic、NumPy/SciPy、OpenPyXL、Pillow、psutil、pandas 和
 & '.\scripts\diagnose.ps1'
 ```
 
-`.mcp.json` 使用相对路径调用插件目录中的 Python，因此源代码目录和 `.venv` 可以整体移动。
+`.mcp.json` 调用 `scripts/run_mcp.ps1`，启动器根据 manifest 版本选择对应的外部运行环境。
 然后把插件安装或更新到个人 Codex marketplace：
 
 ```powershell
@@ -435,3 +437,4 @@ LICENSE 文件为准。
 
 - [Origin COM Automation 0.2.0 验证报告](docs/VALIDATION-0.2.0.md)
 - [Origin COM Automation 0.2.1 验证报告](docs/VALIDATION-0.2.1.md)
+- [Origin COM Automation 0.2.2 验证报告](docs/VALIDATION-0.2.2.md)
