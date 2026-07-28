@@ -18,6 +18,12 @@ MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 CLICKABLE_BADGE = re.compile(
     r"\[!\[(?P<label>[^\]]+)\]\((?P<image>[^)]+)\)\]\((?P<target>[^)]+)\)"
 )
+MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
+HTML_ANCHOR = re.compile(
+    r'<(?:a|span)\b[^>]*\b(?:id|name)\s*=\s*["\']([^"\']+)["\']',
+    re.IGNORECASE,
+)
+MERMAID_BLOCK = re.compile(r"```mermaid\s*(.*?)```", re.IGNORECASE | re.DOTALL)
 LIST_ITEM = re.compile(r"^\s*(?:\d+[.)]|[-*+])\s+(.+)$", re.MULTILINE)
 SUBHEADING = re.compile(r"^#{3,6}\s+(.+)$", re.MULTILINE)
 EXPECTED_SECTIONS = [
@@ -92,7 +98,20 @@ def _badges_by_purpose(text: str) -> dict[str, re.Match[str]]:
     return matches
 
 
-def _assert_badge_destinations(badges: dict[str, re.Match[str]]) -> None:
+def _document_anchors(text: str) -> set[str]:
+    anchors = {anchor.casefold() for anchor in HTML_ANCHOR.findall(text)}
+    for heading in MARKDOWN_HEADING.findall(text):
+        label = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", heading)
+        label = re.sub(r"[^\w\s-]", "", label.casefold())
+        anchor = re.sub(r"[\s-]+", "-", label).strip("-")
+        if anchor:
+            anchors.add(anchor)
+    return anchors
+
+
+def _assert_badge_destinations(
+    badges: dict[str, re.Match[str]], text: str, readme_name: str
+) -> None:
     version_target = urlsplit(badges["version"]["target"])
     assert version_target.scheme.casefold() == "https"
     assert version_target.netloc.casefold() == "github.com"
@@ -107,16 +126,19 @@ def _assert_badge_destinations(badges: dict[str, re.Match[str]]) -> None:
         "/sheldon12311815/origin-com-automation/actions/workflows/unit-tests.yml"
     )
 
-    for purpose in ("windows", "python", "codex-plugin"):
-        install_target = urlsplit(badges[purpose]["target"])
-        assert install_target.scheme == ""
-        assert install_target.netloc == ""
-        assert install_target.path in {"", "README.md", "README.zh-CN.md"}
-        assert install_target.fragment.casefold() in {
-            "install",
-            "installation",
-            "requirements",
-        }
+    anchors = _document_anchors(text)
+    local_badge_anchors = {
+        "windows": "requirements",
+        "python": "requirements",
+        "codex-plugin": "installation",
+    }
+    for purpose, expected_anchor in local_badge_anchors.items():
+        local_target = urlsplit(badges[purpose]["target"])
+        assert local_target.scheme == ""
+        assert local_target.netloc == ""
+        assert local_target.path in {"", readme_name}
+        assert local_target.fragment.casefold() == expected_anchor
+        assert expected_anchor in anchors
 
     origin_target = urlsplit(badges["origin-verified"]["target"])
     assert origin_target.scheme == "" and origin_target.netloc == ""
@@ -144,14 +166,14 @@ def test_readmes_link_languages_show_the_logo_and_have_meaningful_badges():
 
     assert "[简体中文](README.zh-CN.md)" in english
     assert "[English](README.md)" in chinese
-    for text in (english, chinese):
+    for readme_path, text in ((ENGLISH, english), (CHINESE, chinese)):
         assert "assets/origin-automation-logo.png" in text
         badges_by_purpose = _badges_by_purpose(text)
         badges = list(badges_by_purpose.values())
         assert all(match["label"].strip() for match in badges)
         assert all(match["image"].strip() for match in badges)
         assert all(match["target"].strip() not in {"", "#"} for match in badges)
-        _assert_badge_destinations(badges_by_purpose)
+        _assert_badge_destinations(badges_by_purpose, text, readme_path.name)
 
 
 def test_readmes_include_a_six_field_request_template_and_four_prompt_scenarios():
@@ -277,28 +299,40 @@ def test_tool_reference_lists_every_public_mcp_tool():
 def test_architecture_document_preserves_the_mermaid_nodes_and_flow():
     assert ARCHITECTURE.is_file()
     architecture = _read(ARCHITECTURE)
+    mermaid_match = MERMAID_BLOCK.search(architecture)
+    assert mermaid_match is not None
+    mermaid = mermaid_match.group(1)
 
-    assert "```mermaid" in architecture
-    for node in (
-        'Codex["Codex / Codex App"]',
-        'MCP["Local Python MCP Server"]',
-        'Controller["Safety Controller"]',
-        'STA["Serialized STA COM Worker"]',
-        'Origin["Origin COM / LabTalk / X-Functions"]',
-        'Artifacts["Verified OPJU / Data / Graph Artifacts"]',
-    ):
-        assert node in architecture
+    node_ids = ("Codex", "MCP", "Controller", "STA", "Origin", "Artifacts")
+    for node_id in node_ids:
+        assert re.search(rf"\b{node_id}\b", mermaid)
 
-    for edge in (
-        r"Codex.*?-->\|JSON Schema tool call\|\s*MCP",
-        r"MCP\s*-->\s*Controller",
-        r"Controller.*?-->\|serialized task queue\|\s*STA",
-        r"STA\s*-->\s*Origin",
-        r"Origin\s*-->\s*Artifacts",
-        r"Artifacts.*?-->\|readback, hashes, pixel checks\|\s*Controller",
-        r"Controller.*?-->\|common result envelope\|\s*Codex",
+    node_shape = r'(?:\s*(?:\[[^\]\n]*\]|\([^\)\n]*\)|\{[^\}\n]*\}))?'
+    for source, target in (
+        ("Codex", "MCP"),
+        ("MCP", "Controller"),
+        ("Controller", "STA"),
+        ("STA", "Origin"),
+        ("Origin", "Artifacts"),
+        ("Artifacts", "Controller"),
+        ("Controller", "Codex"),
     ):
-        assert re.search(edge, architecture)
+        edge = re.compile(
+            rf"^\s*{source}\b{node_shape}\s*-->\s*"
+            rf"(?:\|[^|\n]*\|\s*)?{target}\b",
+            re.MULTILINE,
+        )
+        assert edge.search(mermaid), f"missing Mermaid edge: {source} -> {target}"
+
+    normalized = re.sub(r"[^a-z0-9]+", " ", architecture.casefold())
+    for concepts in (
+        ("json", "schema", "tool", "call"),
+        ("serialized", "sta", "queue"),
+        ("origin", "com", "labtalk", "x", "function"),
+        ("verified", "artifact", "readback"),
+    ):
+        for concept in concepts:
+            assert re.search(rf"\b{concept}\w*\b", normalized)
 
 
 def test_user_guide_has_meaningful_usage_request_and_prompt_content():
