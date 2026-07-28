@@ -1,6 +1,6 @@
 {
   "name": "origin-com-automation",
-  "version": "0.2.2+codex.20260728085857",
+  "version": "0.2.3+codex.20260728185943",
   "description": "Safe serialized Origin COM automation for data analysis, plotting, and export.",
   "author": {
     "name": "Dawn"
@@ -15,6 +15,9 @@
     "longDescription": "Start an owned Origin instance, inspect and copy projects, run explicit analyses, create graphs, and export validated artifacts through a local Python COM bridge.",
     "developerName": "Dawn",
     "category": "Productivity",
+    "brandColor": "#DF5B3F",
+    "composerIcon": "./assets/origin-automation-composer.png",
+    "logo": "./assets/origin-automation-logo.png",
     "capabilities": [
       "Interactive",
       "Write"
