@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 from dataclasses import dataclass
 from typing import Any, Mapping
+
+from ..utils.hashing import canonical_digest
 
 from .common import (
     FileRef,
@@ -187,9 +187,7 @@ def build_xfunction_plan(
             "outputs": {key: value.value for key, value in normalized_outputs.items()},
             "recalculate_mode": recalculate_mode,
         }
-        digest = hashlib.sha256(
-            json.dumps(digest_payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        ).hexdigest()[:16]
+        digest = canonical_digest(digest_payload)[:16]
         operation_ref = f"op://{normalized_name}/{digest}"
 
     return XFunctionPlan(

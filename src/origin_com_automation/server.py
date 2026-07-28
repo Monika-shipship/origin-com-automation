@@ -52,12 +52,31 @@ from .mcp.schemas import (
 from .native.common import OutputRef
 from .knowledge import query_knowledge
 from .tools.health import health_check
+from .utils.runtime import controller_origin_version
 from .workflows.executor import execute_figure
 from .workflows.figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
 from .workflows.tasks import TaskManager
 
 logging.basicConfig(stream=sys.stderr, level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logger = logging.getLogger(__name__)
+
+# Compatibility re-exports for callers that imported the pre-split schema classes here.
+__all__ = [
+    "CategoricalLegendOptions",
+    "CategoricalStyleOptions",
+    "CategoryMarkerOptions",
+    "GraphDataBinding",
+    "NativeBooleanInput",
+    "NativeFileInput",
+    "NativeIntegerInput",
+    "NativeNumberInput",
+    "NativeRangeInput",
+    "NativeStringInput",
+    "PlotStyleOptions",
+    "StrictOptions",
+    "create_server",
+    "main",
+]
 
 
 def create_server(
@@ -121,7 +140,7 @@ def create_server(
     ) -> ResultEnvelope:
         """Report verified, supported-unverified, and unsupported Origin capabilities."""
 
-        origin_version = getattr(active_controller(), "origin_version", None)
+        origin_version = controller_origin_version(active_controller())
         return ResultEnvelope.ok(
             {
                 "origin_version": origin_version,
@@ -647,9 +666,7 @@ def create_server(
     def origin_plan_figure(spec: FigureSpec) -> ResultEnvelope:
         """Preflight a declarative figure route and return its immutable execution digest."""
         controller = active_controller()
-        version = getattr(controller, "origin_version", None) or getattr(
-            controller, "_origin_version", None
-        )
+        version = controller_origin_version(controller)
         return ResultEnvelope.ok(
             compile_figure_spec(spec, origin_version=version),
             origin_version=version,
@@ -666,9 +683,7 @@ def create_server(
                 data={"expected_digest": plan_digest, "actual_digest": actual_digest},
             )
         controller = active_controller()
-        version = getattr(controller, "origin_version", None) or getattr(
-            controller, "_origin_version", None
-        )
+        version = controller_origin_version(controller)
         plan = compile_figure_spec(spec, origin_version=version)
         if not plan["executor_executable"]:
             return ResultEnvelope.fail(
@@ -713,7 +728,7 @@ def create_server(
                     "BATCH_PLAN_CHANGED",
                     f"Batch FigureSpec {index} does not match its approved digest",
                 )
-            version = getattr(active_controller(), "_origin_version", None)
+            version = controller_origin_version(active_controller())
             plan = compile_figure_spec(spec, origin_version=version)
             if not plan["executor_executable"]:
                 return ResultEnvelope.fail(

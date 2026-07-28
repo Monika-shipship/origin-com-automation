@@ -4,11 +4,13 @@ from __future__ import annotations
 
 from typing import Annotated, Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import Field
+
+from ..utils.runtime import StrictModel
 
 
-class StrictOptions(BaseModel):
-    model_config = ConfigDict(extra="forbid")
+class StrictOptions(StrictModel):
+    pass
 
 
 class NativeRangeInput(StrictOptions):

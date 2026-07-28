@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import inspect
 import json
 import logging
@@ -75,6 +74,7 @@ from ..services.projects import (
     validate_project_artifact,
 )
 from ..services.worksheets import table_from_com_value
+from ..utils.hashing import sha256_file
 from .discovery import discover_registrations, executable_version
 from .errors import (
     AnalysisExecutionError,
@@ -94,7 +94,6 @@ from .graph_support import (
     SCALE_TYPES,
     graph_configuration_commands as _graph_configuration_commands,
     graph_page_name as _graph_page_name,
-    graph_reference as _graph_reference,
     resolve_graph_layer as _resolve_graph_layer,
 )
 from .project_support import (
@@ -115,7 +114,6 @@ from .project_support import (
 from .session import SessionManager
 from .worker import SerialComWorker
 from .worksheet_support import (
-    ORIGIN_DATA_FORMAT_NUMERIC,
     ORIGIN_DATA_FORMAT_TEXT,
     ORIGIN_DATA_FORMAT_TEXT_NUMERIC,
     cells_equal as _cells_equal,
@@ -3722,7 +3720,7 @@ class OriginController:
         if not source.is_file():
             return ResultEnvelope.fail("INPUT_NOT_FOUND", f"Data file does not exist: {source}")
         try:
-            source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+            source_sha256 = sha256_file(source)
         except OSError as exc:
             return ResultEnvelope.fail(
                 _exception_error_code(exc),
@@ -3859,7 +3857,7 @@ class OriginController:
             def validate_linked_import() -> ResultEnvelope:
                 app = self._require_app()
                 try:
-                    current_source_sha256 = hashlib.sha256(source.read_bytes()).hexdigest()
+                    current_source_sha256 = sha256_file(source)
                 except OSError:
                     return ResultEnvelope.fail(
                         "DATA_SOURCE_UNAVAILABLE",

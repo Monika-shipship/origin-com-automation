@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from ..contracts import ResultEnvelope
+from ..utils.runtime import controller_origin_version
 from .figurespec import FigureSpec, compile_figure_spec, figure_spec_digest
 
 
@@ -25,7 +26,7 @@ def execute_figure(
     context.stage("preflight", mutation=False)
     plan = compile_figure_spec(
         spec,
-        origin_version=getattr(controller, "origin_version", None),
+        origin_version=controller_origin_version(controller),
     )
     if not plan["executor_executable"]:
         raise FigureExecutionError("; ".join(plan["blockers"]))

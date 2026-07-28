@@ -2,23 +2,18 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 
 from ..objects.validation import stable_ref
+from ..utils.hashing import sha256_file
 
 
 class GraphTemplateError(ValueError):
     code = "GRAPH_TEMPLATE_INVALID"
 
 
-def _digest(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            hasher.update(block)
-    return hasher.hexdigest()
+_digest = sha256_file
 
 
 def discover_templates(roots: list[str]) -> list[dict[str, object]]:
@@ -81,4 +76,3 @@ def apply_template_plan(
         required_layers=required_layers,
         command=f'template_apply file:="{path.as_posix()}";',
     )
-

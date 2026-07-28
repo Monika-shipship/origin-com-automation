@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
-import hashlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
+
+from ..utils.hashing import sha256_file
 
 
 class BatchPlanError(ValueError):
@@ -26,12 +27,7 @@ class BatchPlan:
     output_root: str
 
 
-def _sha256(path: Path) -> str:
-    hasher = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            hasher.update(block)
-    return hasher.hexdigest()
+_sha256 = sha256_file
 
 
 def build_batch_plan(
@@ -92,4 +88,3 @@ def execute_batch(
         "stopped_early": stopped,
         "results": results,
     }
-
