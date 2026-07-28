@@ -2,12 +2,16 @@ from __future__ import annotations
 
 import re
 from pathlib import Path
+from urllib.parse import urlsplit
 
 
 ROOT = Path(__file__).resolve().parents[2]
 ENGLISH = ROOT / "README.md"
 CHINESE = ROOT / "README.zh-CN.md"
 SERVER = ROOT / "src" / "origin_com_automation" / "server.py"
+USER_GUIDE = ROOT / "docs" / "USER-GUIDE.md"
+TOOL_REFERENCE = ROOT / "docs" / "TOOL-REFERENCE.md"
+ARCHITECTURE = ROOT / "docs" / "ARCHITECTURE.md"
 SECTION_MARKER = re.compile(r"<!-- section:([a-z0-9-]+) -->")
 TOOL_NAME = re.compile(r'@strict_tool\(name="([a-z0-9_]+)"\)')
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
@@ -29,6 +33,15 @@ EXPECTED_SECTIONS = [
     "disclaimer",
     "references",
 ]
+BADGE_PURPOSES = (
+    ("version", r"\b(?:version|latest|stable)\b|\brelease\b(?!\s*gates?\b)"),
+    ("release-gates", r"\b(?:release\s+gates?|gates?|actions|workflow|ci)\b"),
+    ("windows", r"\bwindows\b"),
+    ("python", r"\bpython\b"),
+    ("origin-verified", r"\borigin\b"),
+    ("codex-plugin", r"\bcodex\b"),
+    ("mit-license", r"\b(?:mit|license)\b"),
+)
 
 
 def _read(path: Path) -> str:
@@ -61,6 +74,59 @@ def _assert_prompt_scenarios(text: str, patterns: tuple[str, ...]) -> None:
         assert re.search(pattern, heading, flags=re.IGNORECASE), heading
 
 
+def _badges_by_purpose(text: str) -> dict[str, re.Match[str]]:
+    badges = list(CLICKABLE_BADGE.finditer(text))
+    assert len(badges) == len(BADGE_PURPOSES)
+
+    matches: dict[str, re.Match[str]] = {}
+    for purpose, pattern in BADGE_PURPOSES:
+        candidates = [
+            badge
+            for badge in badges
+            if re.search(pattern, badge["label"], flags=re.IGNORECASE)
+        ]
+        assert len(candidates) == 1, f"expected one {purpose} badge, found {len(candidates)}"
+        matches[purpose] = candidates[0]
+
+    assert len({badge.start() for badge in matches.values()}) == len(BADGE_PURPOSES)
+    return matches
+
+
+def _assert_badge_destinations(badges: dict[str, re.Match[str]]) -> None:
+    version_target = urlsplit(badges["version"]["target"])
+    assert version_target.scheme.casefold() == "https"
+    assert version_target.netloc.casefold() == "github.com"
+    assert version_target.path.rstrip("/").casefold() == (
+        "/sheldon12311815/origin-com-automation/releases/tag/v0.2.3"
+    )
+
+    gates_target = urlsplit(badges["release-gates"]["target"])
+    assert gates_target.scheme.casefold() == "https"
+    assert gates_target.netloc.casefold() == "github.com"
+    assert gates_target.path.rstrip("/").casefold() == (
+        "/sheldon12311815/origin-com-automation/actions/workflows/unit-tests.yml"
+    )
+
+    for purpose in ("windows", "python", "codex-plugin"):
+        install_target = urlsplit(badges[purpose]["target"])
+        assert install_target.scheme == ""
+        assert install_target.netloc == ""
+        assert install_target.path in {"", "README.md", "README.zh-CN.md"}
+        assert install_target.fragment.casefold() in {
+            "install",
+            "installation",
+            "requirements",
+        }
+
+    origin_target = urlsplit(badges["origin-verified"]["target"])
+    assert origin_target.scheme == "" and origin_target.netloc == ""
+    assert origin_target.path.removeprefix("./") == "docs/VALIDATION-0.2.3.md"
+
+    license_target = urlsplit(badges["mit-license"]["target"])
+    assert license_target.scheme == "" and license_target.netloc == ""
+    assert license_target.path.removeprefix("./") == "LICENSE"
+
+
 def test_readmes_have_the_same_ordered_public_sections():
     assert ENGLISH.is_file()
     assert CHINESE.is_file()
@@ -80,29 +146,12 @@ def test_readmes_link_languages_show_the_logo_and_have_meaningful_badges():
     assert "[English](README.md)" in chinese
     for text in (english, chinese):
         assert "assets/origin-automation-logo.png" in text
-        badges = list(CLICKABLE_BADGE.finditer(text))
-        assert len(badges) == 7
+        badges_by_purpose = _badges_by_purpose(text)
+        badges = list(badges_by_purpose.values())
         assert all(match["label"].strip() for match in badges)
         assert all(match["image"].strip() for match in badges)
         assert all(match["target"].strip() not in {"", "#"} for match in badges)
-
-        for purpose in (
-            r"release",
-            r"gate|actions",
-            r"windows",
-            r"python",
-            r"origin",
-            r"codex",
-            r"license|mit",
-        ):
-            assert any(
-                re.search(
-                    purpose,
-                    " ".join(match[group] for group in ("label", "image", "target")),
-                    flags=re.IGNORECASE,
-                )
-                for match in badges
-            )
+        _assert_badge_destinations(badges_by_purpose)
 
 
 def test_readmes_include_a_six_field_request_template_and_four_prompt_scenarios():
@@ -215,13 +264,91 @@ def test_readmes_link_to_focused_user_tool_and_architecture_documents():
             assert reference in linked_targets
 
 
-def test_readmes_list_every_public_mcp_tool():
+def test_tool_reference_lists_every_public_mcp_tool():
+    assert TOOL_REFERENCE.is_file()
     tool_names = TOOL_NAME.findall(_read(SERVER))
+    reference = _read(TOOL_REFERENCE)
 
     assert len(tool_names) == 45
-    for text in (_read(ENGLISH), _read(CHINESE)):
-        missing = [name for name in tool_names if name not in text]
-        assert missing == []
+    missing = [name for name in tool_names if name not in reference]
+    assert missing == []
+
+
+def test_architecture_document_preserves_the_mermaid_nodes_and_flow():
+    assert ARCHITECTURE.is_file()
+    architecture = _read(ARCHITECTURE)
+
+    assert "```mermaid" in architecture
+    for node in (
+        'Codex["Codex / Codex App"]',
+        'MCP["Local Python MCP Server"]',
+        'Controller["Safety Controller"]',
+        'STA["Serialized STA COM Worker"]',
+        'Origin["Origin COM / LabTalk / X-Functions"]',
+        'Artifacts["Verified OPJU / Data / Graph Artifacts"]',
+    ):
+        assert node in architecture
+
+    for edge in (
+        r"Codex.*?-->\|JSON Schema tool call\|\s*MCP",
+        r"MCP\s*-->\s*Controller",
+        r"Controller.*?-->\|serialized task queue\|\s*STA",
+        r"STA\s*-->\s*Origin",
+        r"Origin\s*-->\s*Artifacts",
+        r"Artifacts.*?-->\|readback, hashes, pixel checks\|\s*Controller",
+        r"Controller.*?-->\|common result envelope\|\s*Codex",
+    ):
+        assert re.search(edge, architecture)
+
+
+def test_user_guide_has_meaningful_usage_request_and_prompt_content():
+    assert USER_GUIDE.is_file()
+    guide = _read(USER_GUIDE)
+
+    for tool_name in (
+        "origin_import_data",
+        "origin_open_project",
+        "origin_run_analysis",
+        "origin_create_graph",
+        "origin_save_project",
+        "origin_export_graph",
+    ):
+        assert tool_name in guide
+
+    assert re.search(r"request template", guide, flags=re.IGNORECASE)
+    request_patterns = (
+        r"source",
+        r"worksheet",
+        r"\bX\b.*\bY\b|\bX/Y\b",
+        r"range|branch",
+        r"analysis|method",
+        r"graph|output",
+    )
+    list_items = LIST_ITEM.findall(guide)
+    assert any(
+        all(
+            re.search(pattern, item, flags=re.IGNORECASE)
+            for item, pattern in zip(
+                list_items[start : start + len(request_patterns)],
+                request_patterns,
+                strict=True,
+            )
+        )
+        for start in range(len(list_items) - len(request_patterns) + 1)
+    )
+
+    assert re.search(r"(?:ready-to-use|example) prompts?", guide, flags=re.IGNORECASE)
+    prompt_headings = SUBHEADING.findall(guide)
+    for scenario in (
+        r"new data",
+        r"existing.*OPJU",
+        r"native.*fit",
+        r"multi[- ]series.*plot",
+    ):
+        assert any(
+            re.search(scenario, heading, flags=re.IGNORECASE)
+            for heading in prompt_headings
+        )
 
 
 def test_readme_local_links_resolve_to_repository_files():

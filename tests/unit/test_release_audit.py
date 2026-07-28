@@ -1,5 +1,6 @@
 import ast
 import json
+import re
 import subprocess
 import tomllib
 from pathlib import Path
@@ -116,6 +117,30 @@ def test_v023_release_metadata_and_brand_assets_are_consistent():
     assert interface.get("logo") == "./assets/origin-automation-logo.png"
     for asset_path in (interface["composerIcon"], interface["logo"]):
         assert (root / asset_path.removeprefix("./")).is_file()
+
+
+def test_v023_readmes_identify_the_release_and_link_its_validation_record():
+    root = Path(__file__).resolve().parents[2]
+    validation_link = re.compile(
+        r"\[[^\]]+\]\(docs/VALIDATION-0\.2\.3\.md(?:#[^)]+)?\)"
+    )
+
+    for readme_name in ("README.md", "README.zh-CN.md"):
+        readme = (root / readme_name).read_text(encoding="utf-8")
+        assert "0.2.3" in readme
+        assert validation_link.search(readme)
+
+
+def test_v023_release_document_set_exists():
+    root = Path(__file__).resolve().parents[2]
+    expected_documents = (
+        "CHANGELOG.md",
+        "docs/VALIDATION-0.2.3.md",
+        "docs/releases/v0.2.3.md",
+    )
+
+    missing = [path for path in expected_documents if not (root / path).is_file()]
+    assert missing == []
 
 
 def test_release_audit_detects_runtime_package_version_drift(tmp_path: Path):
