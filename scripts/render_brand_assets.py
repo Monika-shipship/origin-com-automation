@@ -2,60 +2,151 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from pathlib import Path
 
 from PIL import Image, ImageDraw
 
-CANVAS = 512
+Point = tuple[int, int]
+Box = tuple[int, int, int, int]
+
 SUPERSAMPLE = 4
+PNG_COMPRESSION_LEVEL = 9
 WHITE = "#FFFFFF"
 PANEL = "#EEF1F3"
 CHARCOAL = "#252B33"
 CORAL = "#DF5B3F"
 TEAL = "#278F7A"
 
-TILE = (16, 16, 496, 496)
-WORKSPACE = (72, 72, 440, 440)
-Y_AXIS = ((144, 346), (144, 158))
-X_AXIS = ((144, 346), (378, 346))
-CURVE = (
-    (164, 316),
-    (190, 308),
-    (203, 274),
-    (228, 258),
-    (255, 241),
-    (277, 220),
-    (307, 207),
-    (330, 197),
-    (348, 184),
-    (370, 174),
+
+@dataclass(frozen=True)
+class RoundedRect:
+    box: Box
+    radius: int
+    fill: str
+
+
+@dataclass(frozen=True)
+class Polyline:
+    points: tuple[Point, ...]
+    stroke: str
+    width: int
+
+
+@dataclass(frozen=True)
+class BezierPath:
+    start: Point
+    segments: tuple[tuple[Point, Point, Point], ...]
+    stroke: str
+    width: int
+
+
+@dataclass(frozen=True)
+class Circle:
+    center: Point
+    outer_radius: int
+    fill: str
+    outline: str
+    outline_width: int
+
+
+@dataclass(frozen=True)
+class BrandGeometry:
+    canvas: int
+    tile: RoundedRect
+    workspace: RoundedRect
+    axis: Polyline
+    curve: BezierPath
+    points: tuple[Circle, ...]
+
+
+BRAND = BrandGeometry(
+    canvas=512,
+    tile=RoundedRect((16, 16, 496, 496), 108, WHITE),
+    workspace=RoundedRect((72, 72, 440, 440), 38, PANEL),
+    axis=Polyline(((144, 158), (144, 346), (378, 346)), CHARCOAL, 18),
+    curve=BezierPath(
+        start=(164, 316),
+        segments=(
+            ((190, 308), (203, 274), (228, 258)),
+            ((255, 241), (277, 220), (307, 207)),
+            ((330, 197), (348, 184), (370, 174)),
+        ),
+        stroke=CORAL,
+        width=18,
+    ),
+    points=(
+        Circle((228, 258), 22, TEAL, WHITE, 8),
+        Circle((307, 207), 22, TEAL, WHITE, 8),
+    ),
 )
-POINTS = ((228, 258), (307, 207))
+
+
+def _svg_rect(rect: RoundedRect) -> str:
+    left, top, right, bottom = rect.box
+    return (
+        f'<rect x="{left}" y="{top}" width="{right - left}" '
+        f'height="{bottom - top}" rx="{rect.radius}" fill="{rect.fill}"/>'
+    )
+
+
+def _svg_polyline(line: Polyline) -> str:
+    commands = " L".join(f"{x} {y}" for x, y in line.points)
+    return (
+        f'<path d="M{commands}" fill="none" stroke="{line.stroke}" '
+        f'stroke-width="{line.width}" stroke-linecap="round" '
+        'stroke-linejoin="round"/>'
+    )
+
+
+def _svg_bezier(curve: BezierPath) -> str:
+    start = f"{curve.start[0]} {curve.start[1]}"
+    segments = " ".join(
+        f"C{control_1[0]} {control_1[1]} {control_2[0]} {control_2[1]} "
+        f"{end[0]} {end[1]}"
+        for control_1, control_2, end in curve.segments
+    )
+    return (
+        f'<path d="M{start} {segments}" fill="none" stroke="{curve.stroke}" '
+        f'stroke-width="{curve.width}" stroke-linecap="round"/>'
+    )
+
+
+def _svg_circle(circle: Circle) -> str:
+    x, y = circle.center
+    centerline_radius = circle.outer_radius - circle.outline_width // 2
+    return (
+        f'<circle cx="{x}" cy="{y}" r="{centerline_radius}" fill="{circle.fill}" '
+        f'stroke="{circle.outline}" stroke-width="{circle.outline_width}"/>'
+    )
 
 
 def _svg() -> str:
-    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
-  <rect x="16" y="16" width="480" height="480" rx="108" fill="{WHITE}"/>
-  <rect x="72" y="72" width="368" height="368" rx="38" fill="{PANEL}"/>
-  <path d="M144 158 V346 H378" fill="none" stroke="{CHARCOAL}" stroke-width="18" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M164 316 C190 308 203 274 228 258 C255 241 277 220 307 207 C330 197 348 184 370 174" fill="none" stroke="{CORAL}" stroke-width="18" stroke-linecap="round"/>
-  <circle cx="228" cy="258" r="22" fill="{TEAL}" stroke="{WHITE}" stroke-width="8"/>
-  <circle cx="307" cy="207" r="22" fill="{TEAL}" stroke="{WHITE}" stroke-width="8"/>
-</svg>
-"""
+    shapes = (
+        _svg_rect(BRAND.tile),
+        _svg_rect(BRAND.workspace),
+        _svg_polyline(BRAND.axis),
+        _svg_bezier(BRAND.curve),
+        *(_svg_circle(point) for point in BRAND.points),
+    )
+    body = "\n".join(f"  {shape}" for shape in shapes)
+    return (
+        f'<svg xmlns="http://www.w3.org/2000/svg" '
+        f'viewBox="0 0 {BRAND.canvas} {BRAND.canvas}">\n{body}\n</svg>\n'
+    )
 
 
-def _scale_point(point: tuple[int, int], scale: float) -> tuple[int, int]:
+def _scale_point(point: Point, scale: float) -> Point:
     return round(point[0] * scale), round(point[1] * scale)
 
 
-def _scale_box(box: tuple[int, int, int, int], scale: float) -> tuple[int, ...]:
+def _scale_box(box: Box, scale: float) -> tuple[int, ...]:
     return tuple(round(value * scale) for value in box)
 
 
 def _rounded_line(
     draw: ImageDraw.ImageDraw,
-    points: list[tuple[int, int]],
+    points: list[Point],
     *,
     fill: str,
     width: int,
@@ -66,61 +157,94 @@ def _rounded_line(
         draw.ellipse((x - radius, y - radius, x + radius, y + radius), fill=fill)
 
 
-def _curve_points(scale: float) -> list[tuple[int, int]]:
-    segments = (CURVE[:4], CURVE[3:7], CURVE[6:])
-    sampled: list[tuple[int, int]] = []
-    for segment in segments:
-        p0, p1, p2, p3 = segment
+def _curve_points(curve: BezierPath, scale: float) -> list[Point]:
+    sampled: list[Point] = []
+    p0 = curve.start
+    for p1, p2, p3 in curve.segments:
         for step in range(33):
             t = step / 32
             u = 1 - t
-            x = u**3 * p0[0] + 3 * u**2 * t * p1[0] + 3 * u * t**2 * p2[0] + t**3 * p3[0]
-            y = u**3 * p0[1] + 3 * u**2 * t * p1[1] + 3 * u * t**2 * p2[1] + t**3 * p3[1]
+            x = (
+                u**3 * p0[0]
+                + 3 * u**2 * t * p1[0]
+                + 3 * u * t**2 * p2[0]
+                + t**3 * p3[0]
+            )
+            y = (
+                u**3 * p0[1]
+                + 3 * u**2 * t * p1[1]
+                + 3 * u * t**2 * p2[1]
+                + t**3 * p3[1]
+            )
             point = round(x * scale), round(y * scale)
             if not sampled or point != sampled[-1]:
                 sampled.append(point)
+        p0 = p3
     return sampled
 
 
+def _draw_rect(draw: ImageDraw.ImageDraw, rect: RoundedRect, scale: float) -> None:
+    draw.rounded_rectangle(
+        _scale_box(rect.box, scale),
+        radius=round(rect.radius * scale),
+        fill=rect.fill,
+    )
+
+
 def _render_png(size: int) -> Image.Image:
-    scale = size * SUPERSAMPLE / CANVAS
+    scale = size * SUPERSAMPLE / BRAND.canvas
     rendered_size = size * SUPERSAMPLE
     image = Image.new("RGBA", (rendered_size, rendered_size), (0, 0, 0, 0))
     draw = ImageDraw.Draw(image)
 
-    draw.rounded_rectangle(
-        _scale_box(TILE, scale), radius=round(108 * scale), fill=WHITE
-    )
-    draw.rounded_rectangle(
-        _scale_box(WORKSPACE, scale), radius=round(38 * scale), fill=PANEL
-    )
-    axis_width = round(18 * scale)
+    _draw_rect(draw, BRAND.tile, scale)
+    _draw_rect(draw, BRAND.workspace, scale)
     _rounded_line(
         draw,
-        [_scale_point(point, scale) for point in Y_AXIS],
-        fill=CHARCOAL,
-        width=axis_width,
+        [_scale_point(point, scale) for point in BRAND.axis.points],
+        fill=BRAND.axis.stroke,
+        width=round(BRAND.axis.width * scale),
     )
     _rounded_line(
         draw,
-        [_scale_point(point, scale) for point in X_AXIS],
-        fill=CHARCOAL,
-        width=axis_width,
+        _curve_points(BRAND.curve, scale),
+        fill=BRAND.curve.stroke,
+        width=round(BRAND.curve.width * scale),
     )
-    _rounded_line(draw, _curve_points(scale), fill=CORAL, width=round(18 * scale))
 
-    point_radius = round(22 * scale)
-    point_outline = round(8 * scale)
-    for point in POINTS:
-        x, y = _scale_point(point, scale)
+    for point in BRAND.points:
+        x, y = _scale_point(point.center, scale)
+        radius = round(point.outer_radius * scale)
         draw.ellipse(
-            (x - point_radius, y - point_radius, x + point_radius, y + point_radius),
-            fill=TEAL,
-            outline=WHITE,
-            width=point_outline,
+            (x - radius, y - radius, x + radius, y + radius),
+            fill=point.fill,
+            outline=point.outline,
+            width=round(point.outline_width * scale),
         )
 
     return image.resize((size, size), Image.Resampling.LANCZOS)
+
+
+def _save_png(image: Image.Image, path: Path) -> None:
+    image.save(
+        path,
+        format="PNG",
+        optimize=False,
+        compress_level=PNG_COMPRESSION_LEVEL,
+    )
+
+
+def render_assets(output_dir: Path) -> tuple[Image.Image, Image.Image]:
+    """Write deterministic SVG and PNG brand assets to ``output_dir``."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "origin-automation-logo.svg").write_text(
+        _svg(), encoding="utf-8", newline="\n"
+    )
+    logo = _render_png(512)
+    composer = _render_png(128)
+    _save_png(logo, output_dir / "origin-automation-logo.png")
+    _save_png(composer, output_dir / "origin-automation-composer.png")
+    return logo, composer
 
 
 def _write_qa_sheet(root: Path, logo: Image.Image, composer: Image.Image) -> None:
@@ -131,19 +255,12 @@ def _write_qa_sheet(root: Path, logo: Image.Image, composer: Image.Image) -> Non
         qa.paste(image, (x, y), image)
     path = root / "artifacts" / "brand" / "icon-qa.png"
     path.parent.mkdir(parents=True, exist_ok=True)
-    qa.save(path, format="PNG", optimize=False)
+    _save_png(qa, path)
 
 
 def main() -> int:
     root = Path(__file__).resolve().parents[1]
-    assets = root / "assets"
-    assets.mkdir(parents=True, exist_ok=True)
-    (assets / "origin-automation-logo.svg").write_text(_svg(), encoding="utf-8")
-
-    logo = _render_png(512)
-    composer = _render_png(128)
-    logo.save(assets / "origin-automation-logo.png", format="PNG", optimize=False)
-    composer.save(assets / "origin-automation-composer.png", format="PNG", optimize=False)
+    logo, composer = render_assets(root / "assets")
     _write_qa_sheet(root, logo, composer)
     return 0
 

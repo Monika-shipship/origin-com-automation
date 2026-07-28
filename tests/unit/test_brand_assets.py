@@ -1,3 +1,4 @@
+import runpy
 from pathlib import Path
 from xml.etree import ElementTree
 
@@ -7,6 +8,12 @@ from PIL import Image, ImageStat
 
 ROOT = Path(__file__).resolve().parents[2]
 ASSETS = ROOT / "assets"
+SCRIPT = ROOT / "scripts" / "render_brand_assets.py"
+BRAND_ASSET_FILENAMES = (
+    "origin-automation-logo.svg",
+    "origin-automation-logo.png",
+    "origin-automation-composer.png",
+)
 
 
 @pytest.mark.parametrize(
@@ -45,3 +52,12 @@ def test_svg_master_uses_the_brand_palette_without_originlab_artwork():
     assert "#df5b3f" in normalized_svg
     assert "#278f7a" in normalized_svg
     assert "originlab" not in normalized_svg
+
+
+def test_brand_generator_reproduces_committed_assets(tmp_path: Path):
+    generator = runpy.run_path(str(SCRIPT), run_name="brand_asset_test")
+
+    generator["render_assets"](tmp_path)
+
+    for filename in BRAND_ASSET_FILENAMES:
+        assert (tmp_path / filename).read_bytes() == (ASSETS / filename).read_bytes()
