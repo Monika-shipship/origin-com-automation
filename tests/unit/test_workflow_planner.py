@@ -162,3 +162,27 @@ def test_auto_recovery_prefers_data_milestone_for_multiple_sources(tmp_path: Pat
 
     assert plan.safe_defaults["resolved_checkpoint_policy"] == "milestone"
     assert plan.safe_defaults["milestone_after"] == "data"
+
+
+def test_planner_blocks_selection_semantics_that_native_routes_do_not_preserve(tmp_path: Path):
+    spec = _derivative_spec(
+        tmp_path,
+        scientific_contract={
+            "branch": "all",
+            "derivative_method": "differentiate",
+            "derivative_order": 1,
+            "input_units": {"x": "V", "y": "A"},
+        },
+        analyses=[{
+            "id": "gm",
+            "method": "derivative",
+            "worksheet_ref": "[Curve]Data",
+            "x_column": "A",
+            "y_columns": ["B"],
+            "selection": {"branch": "forward"},
+        }],
+    )
+
+    plan = compile_workflow(spec, origin_version="10.1.0.178")
+
+    assert any(item["code"] == "ANALYSIS_SELECTION_UNSUPPORTED" for item in plan.blockers)

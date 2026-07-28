@@ -112,3 +112,25 @@ def test_analysis_requires_unique_ids_and_columns(tmp_path: Path):
 
     with pytest.raises(ValidationError, match="y_columns"):
         _spec(tmp_path, analyses=[{**analysis, "y_columns": []}])
+
+
+def test_fit_intent_requires_an_explicit_analysis_step(tmp_path: Path):
+    with pytest.raises(ValidationError, match="fit_and_plot requires at least one analysis step"):
+        _spec(tmp_path, analyses=[])
+
+
+def test_native_operation_qa_rejects_non_operation_analysis_modes(tmp_path: Path):
+    analysis = {
+        "id": "fit",
+        "method": "linear_fit",
+        "worksheet_ref": "[Book1]Data",
+        "x_column": "A",
+        "y_columns": ["B"],
+        "create_operation": False,
+        "recalculate_mode": "none",
+    }
+    with pytest.raises(ValidationError, match="require_native_operations"):
+        _spec(tmp_path, analyses=[analysis])
+
+    with pytest.raises(ValidationError, match="require_native_operations"):
+        _spec(tmp_path, execution={"backend_policy": "external_explicit"})

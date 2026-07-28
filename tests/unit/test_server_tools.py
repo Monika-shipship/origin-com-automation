@@ -373,6 +373,72 @@ def test_run_task_executes_complete_spec_synchronously_with_internal_keys(tmp_pa
     ]
 
 
+def test_run_task_reports_verified_native_analysis_evidence(tmp_path):
+    source = tmp_path / "input.csv"
+    source.write_text("x,y\n1,2\n3,4\n", encoding="utf-8")
+    output = tmp_path / "native-result.opju"
+
+    class NativeTaskController(FakeController):
+        origin_version = "10.1.0.178"
+
+        def start(self, **kwargs):
+            self.calls.append(("start", kwargs))
+            return ResultEnvelope.ok({"session_id": "owned", "owned": True, "pid": 1234})
+
+        def import_data(self, **kwargs):
+            self.calls.append(("import_data", kwargs))
+            return ResultEnvelope.ok(
+                {"worksheet_ref": "[Data]input", "rows": 2, "non_empty_counts": [2, 2]}
+            )
+
+        def run_analysis(self, **kwargs):
+            self.calls.append(("run_analysis", kwargs))
+            return ResultEnvelope.ok({
+                "backend": "origin_native",
+                "native_operation_created": True,
+                "editable_in_origin": True,
+                "operation_ref": "op://fitlr/123456abcdef",
+                "outputs": {"oy": "[Fit]Result!A:B"},
+                "recalculate_mode": "auto",
+            })
+
+        def save_project_copy(self, **kwargs):
+            self.calls.append(("save_project_copy", kwargs))
+            target = Path(kwargs["target_path"])
+            target.write_bytes(b"Origin project")
+            return ResultEnvelope.ok({"path": str(target), "size": target.stat().st_size})
+
+    server = create_server(
+        controller=FakeController(), controller_factory=NativeTaskController
+    )
+    spec = {
+        "intent": "fit_and_plot",
+        "sources": [{"id": "data", "path": str(source)}],
+        "scientific_contract": {
+            "branch": "all",
+            "fit_method": "ordinary_least_squares",
+            "input_units": {"x": "V", "y": "A"},
+        },
+        "analyses": [{
+            "id": "fit",
+            "method": "linear_fit",
+            "worksheet_ref": "[Data]Sheet1",
+            "x_column": "A",
+            "y_columns": ["B"],
+        }],
+        "outputs": {"project_path": str(output)},
+        "qa": {"minimum_rows": 2, "require_native_operations": True},
+    }
+
+    result = asyncio.run(server.call_tool("origin_run_task", {"spec": spec}))
+
+    assert result[1]["success"] is True
+    analysis = result[1]["data"]["methods"]["analyses"][0]
+    assert analysis["resolved_backend"] == "origin_native"
+    assert analysis["native_operation_created"] is True
+    assert analysis["operation_ref"] == "op://fitlr/123456abcdef"
+
+
 def test_workflow_audit_uses_bounded_targets_and_standard_envelope(tmp_path):
     artifact = tmp_path / "result.opju"
     artifact.write_bytes(b"valid project")

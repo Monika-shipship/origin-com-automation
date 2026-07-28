@@ -23,7 +23,7 @@ The values below come from fresh commands against local `main` and the installed
 
 | Gate | Result |
 |---|---|
-| Unit tests | **340 passed** |
+| Unit tests | **347 passed** |
 | Ruff | **passed** |
 | mypy | **passed** |
 | Build and pip check | **passed**; `origin_com_automation-0.4.0` artifacts built |
@@ -34,17 +34,27 @@ The values below come from fresh commands against local `main` and the installed
 
 ## Installed-cache audit
 
-- Installed manifest: `0.4.0+codex.20260727193330`.
-- Clean plugin cache: **54.39 MiB**; no `.venv`, `.mypy_cache`, `build`, or generated
+- Installed manifest: `0.4.0+codex.20260728055733`.
+- Clean plugin cache: **54.52 MiB**; no `.venv`, `.mypy_cache`, `build`, or generated
   `origin_com_automation.egg-info` directory remained after bootstrap.
-- External runtime: **327.51 MiB** under
-  `%LOCALAPPDATA%\OriginComAutomation\runtime\0.4.0+codex.20260727193330`.
+- External runtime: **327.53 MiB** under
+  `%LOCALAPPDATA%\OriginComAutomation\runtime\0.4.0+codex.20260728055733`.
 - Installed package metadata reports `0.4.0`, and the imported package path resolves from the
   external runtime `site-packages`, not the plugin cache or development checkout.
 - Installed stdio MCP initialization passed with **52 tools**, expanded `origin_run_task` schema,
   and a successful `origin_health_check` response.
 - Bootstrap removes only transient build directories that it created itself; pre-existing
   developer build directories are preserved.
+
+## Native-result regression checks
+
+- A workflow that returns materialized/Python analysis data while native operations are required now
+  fails with `NATIVE_ANALYSIS_UNCONFIRMED`.
+- A formula step without verified Origin metadata and value readback now fails with
+  `ORIGIN_FORMULA_UNCONFIRMED`.
+- `fit_and_plot` and `statistical_summary` reject plans without an explicit analysis step.
+- The workflow executor forwards one contiguous formula range and blocks unsupported branch/filter
+  semantics instead of silently applying a different range.
 
 ## Architecture evidence
 

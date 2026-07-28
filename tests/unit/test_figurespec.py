@@ -219,7 +219,15 @@ class WorkflowController:
         return self._ok("open_project", **kwargs)
 
     def run_analysis(self, **kwargs):
-        return self._ok("run_analysis", **kwargs)
+        return self._ok(
+            "run_analysis",
+            backend="origin_native",
+            native_operation_created=True,
+            editable_in_origin=True,
+            operation_ref="op://fitlr/123456abcdef",
+            outputs={"oy": "[Fit]Result!A:B"},
+            **kwargs,
+        )
 
     def create_graph(self, **kwargs):
         return self._ok("create_graph", **kwargs)

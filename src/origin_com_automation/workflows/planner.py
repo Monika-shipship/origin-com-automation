@@ -276,6 +276,25 @@ def compile_workflow(
             )
 
     for formula in spec.formulas:
+        if (
+            len(formula.selection.ranges) > 1
+            or formula.selection.order != "input"
+            or formula.selection.branch not in {None, "all"}
+            or formula.selection.category_column is not None
+            or formula.selection.category_values
+            or formula.selection.filters
+            or formula.selection.missing_rule != "reject"
+        ):
+            blockers.append(
+                {
+                    "code": "FORMULA_SELECTION_UNSUPPORTED",
+                    "formula_id": formula.id,
+                    "message": (
+                        "Origin F(x) workflow formulas currently support one contiguous input-order range "
+                        "without filters, category selection, or alternate missing-value rules"
+                    ),
+                }
+            )
         expected_objects.append(
             {
                 "logical_id": f"formula:{formula.id}",
@@ -285,6 +304,24 @@ def compile_workflow(
             }
         )
     for analysis in spec.analyses:
+        if (
+            len(analysis.selection.ranges) > 1
+            or analysis.selection.branch not in {None, "all"}
+            or analysis.selection.category_column is not None
+            or analysis.selection.category_values
+            or analysis.selection.filters
+            or analysis.selection.missing_rule != "reject"
+        ):
+            blockers.append(
+                {
+                    "code": "ANALYSIS_SELECTION_UNSUPPORTED",
+                    "analysis_id": analysis.id,
+                    "message": (
+                        "This workflow route supports one contiguous analysis range; "
+                        "filters, category branches, and alternate missing-value rules need an explicit auxiliary range"
+                    ),
+                }
+            )
         expected_objects.append(
             {
                 "logical_id": f"analysis:{analysis.id}",

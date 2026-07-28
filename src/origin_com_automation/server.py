@@ -783,6 +783,20 @@ def create_server(
                     "formula": item.formula,
                     "native_function": item.native_function,
                     "recalculate_mode": item.recalculate_mode,
+                    "metadata_verified": bool(
+                        (
+                            receipt.get("objects", {})
+                            .get(f"formula:{item.id}", {})
+                            .get("metadata_verified")
+                        )
+                    ),
+                    "value_readback_verified": bool(
+                        (
+                            receipt.get("objects", {})
+                            .get(f"formula:{item.id}", {})
+                            .get("value_readback_verified")
+                        )
+                    ),
                 }
                 for item in spec.formulas
             ],
@@ -791,8 +805,38 @@ def create_server(
                     "id": item.id,
                     "method": item.method,
                     "backend": item.backend_policy,
+                    "resolved_backend": (
+                        "python"
+                        if (
+                            item.backend_policy == "external_explicit"
+                            or (
+                                item.backend_policy == "inherit"
+                                and spec.execution.backend_policy == "external_explicit"
+                            )
+                        )
+                        else "origin_native"
+                    ),
                     "create_operation": item.create_operation,
                     "recalculate_mode": item.recalculate_mode,
+                    "native_operation_created": bool(
+                        (
+                            receipt.get("objects", {})
+                            .get(f"analysis:{item.id}", {})
+                            .get("native_operation_created")
+                        )
+                    ),
+                    "editable_in_origin": bool(
+                        (
+                            receipt.get("objects", {})
+                            .get(f"analysis:{item.id}", {})
+                            .get("editable_in_origin")
+                        )
+                    ),
+                    "operation_ref": (
+                        receipt.get("objects", {})
+                        .get(f"analysis:{item.id}", {})
+                        .get("operation_ref")
+                    ),
                 }
                 for item in spec.analyses
             ],

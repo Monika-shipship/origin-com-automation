@@ -69,7 +69,18 @@ class FakeController:
         return self._result("read_worksheet", {"worksheet_ref": name, "values": [[1, 2], [3, 4]], "rows": 2}, name=name, **kwargs)
 
     def run_analysis(self, **kwargs):
-        return self._result("run_analysis", {"operation_ref": "operation:fit", "recalculate_mode": "auto"}, **kwargs)
+        return self._result(
+            "run_analysis",
+            {
+                "backend": "origin_native",
+                "operation_ref": "op://fitlr/123456abcdef",
+                "recalculate_mode": "auto",
+                "native_operation_created": True,
+                "editable_in_origin": True,
+                "outputs": {"oy": "[Fit]Result!A:B"},
+            },
+            **kwargs,
+        )
 
     def create_graph(self, **kwargs):
         return self._result("create_graph", {"graph_name": "MainGraph", "graph_ref": "graph:main"}, **kwargs)
@@ -140,7 +151,7 @@ def test_execute_calls_public_controller_methods_in_order_and_verifies_mutations
     assert names.count("save_project_copy") == 1
     assert "read_worksheet" not in names
     assert "list_objects" not in names
-    assert result["objects"]["analysis:fit"]["operation_ref"] == "operation:fit"
+    assert result["objects"]["analysis:fit"]["operation_ref"] == "op://fitlr/123456abcdef"
     assert result["objects"]["graph:main"]["graph_ref"] == "graph:main"
     assert Path(result["ledger_path"]).is_file()
     ledger = json.loads(Path(result["ledger_path"]).read_text(encoding="utf-8"))
@@ -149,6 +160,126 @@ def test_execute_calls_public_controller_methods_in_order_and_verifies_mutations
     assert ledger["checkpoints"] == []
     manifest_paths = [item["path"] for item in result["artifacts"] if item["kind"].startswith("workflow_manifest")]
     assert manifest_paths == []
+    engine.close()
+
+
+def test_engine_rejects_materialized_result_when_native_operation_is_required(tmp_path):
+    class MaterializedController(FakeController):
+        def run_analysis(self, **kwargs):
+            return self._result(
+                "run_analysis",
+                {
+                    "backend": "python",
+                    "native_operation_created": False,
+                    "editable_in_origin": False,
+                    "values": [2.0, 2.0],
+                },
+                **kwargs,
+            )
+
+    spec = workflow_spec(tmp_path)
+    controller = MaterializedController()
+    engine = WorkflowEngine(lambda: controller, task_manager=TaskManager())
+
+    result = engine.execute(
+        spec,
+        expected_digest=workflow_spec_digest(spec),
+        idempotency_key="reject-materialized-analysis",
+    )
+
+    assert result["success"] is False
+    assert result["failed_stage"] == "analysis:fit"
+    assert result["error_code"] == "NATIVE_ANALYSIS_UNCONFIRMED"
+    assert "create an Origin Analysis Operation" in result["error_message"]
+    engine.close()
+
+
+def test_engine_rejects_static_values_when_origin_formula_is_required(tmp_path):
+    class StaticFormulaController(FakeController):
+        def set_column_formula(self, **kwargs):
+            return self._result(
+                "set_column_formula",
+                {
+                    "worksheet_ref": kwargs["worksheet_ref"],
+                    "column_ref": f'{kwargs["worksheet_ref"]}!C',
+                    "values": [2.0, 12.0],
+                },
+                **kwargs,
+            )
+
+    spec = workflow_spec(
+        tmp_path,
+        intent="import_and_plot",
+        scientific_contract={},
+        analyses=[],
+        plots=[],
+        formulas=[{
+            "id": "derived",
+            "worksheet_ref": "[Data]Sheet1",
+            "column": "C",
+            "native_function": "sqrt",
+            "arguments": {"value": "col(B)"},
+        }],
+    )
+    controller = StaticFormulaController()
+    engine = WorkflowEngine(lambda: controller, task_manager=TaskManager())
+
+    result = engine.execute(
+        spec,
+        expected_digest=workflow_spec_digest(spec),
+        idempotency_key="reject-static-formula",
+    )
+
+    assert result["success"] is False
+    assert result["failed_stage"] == "formula:derived"
+    assert result["error_code"] == "ORIGIN_FORMULA_UNCONFIRMED"
+    assert "Set Column Values formula" in result["error_message"]
+    engine.close()
+
+
+def test_engine_forwards_formula_row_selection_to_origin(tmp_path):
+    class NativeFormulaController(FakeController):
+        def set_column_formula(self, **kwargs):
+            return self._result(
+                "set_column_formula",
+                {
+                    "worksheet_ref": kwargs["worksheet_ref"],
+                    "column_ref": f'{kwargs["worksheet_ref"]}!C',
+                    "formula": kwargs["formula"],
+                    "metadata_verified": True,
+                    "value_readback_verified": True,
+                    "recalculate_mode": kwargs["recalculate_mode"],
+                },
+                **kwargs,
+            )
+
+    spec = workflow_spec(
+        tmp_path,
+        intent="import_and_plot",
+        scientific_contract={},
+        analyses=[],
+        plots=[],
+        formulas=[{
+            "id": "derived",
+            "worksheet_ref": "[Data]Sheet1",
+            "column": "C",
+            "formula": "col(A)*col(B)",
+            "selection": {"ranges": [{"start": 2, "end": 4}]},
+        }],
+    )
+    controller = NativeFormulaController()
+    engine = WorkflowEngine(lambda: controller, task_manager=TaskManager())
+
+    result = engine.execute(
+        spec,
+        expected_digest=workflow_spec_digest(spec),
+        idempotency_key="forward-formula-selection",
+    )
+
+    assert result["success"] is True
+    formula_call = next(kwargs for name, kwargs in controller.calls if name == "set_column_formula")
+    assert formula_call["row_start"] == 2
+    assert formula_call["row_end"] == 4
     engine.close()
 
 

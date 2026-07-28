@@ -210,6 +210,23 @@ class WorkflowSpec(StrictModel):
         ):
             if len(values) != len(set(values)):
                 raise ValueError(f"{label} ids must be unique")
+        if self.intent in {"fit_and_plot", "statistical_summary"} and not self.analyses:
+            raise ValueError(f"{self.intent} requires at least one analysis step")
+        if self.qa.require_native_operations:
+            for analysis in self.analyses:
+                resolved_policy = (
+                    self.execution.backend_policy
+                    if analysis.backend_policy == "inherit"
+                    else analysis.backend_policy
+                )
+                if resolved_policy == "external_explicit":
+                    raise ValueError(
+                        "require_native_operations is incompatible with an external analysis backend"
+                    )
+                if not analysis.create_operation:
+                    raise ValueError(
+                        "require_native_operations requires create_operation=true for every native analysis"
+                    )
         return self
 
 

@@ -23,6 +23,17 @@ the corresponding repository version.
 - Public tool names, result envelopes, error codes, native-analysis defaults, and safety gates remain
   compatible with 0.3.1.
 
+### Fixed
+
+- Workflow success now requires verified Origin `F(x)` formula metadata and value readback for formula
+  steps, and verified native Analysis Operation evidence for native analyses.
+- `origin_run_task` now reports the resolved analysis backend, operation reference, and native/editable
+  evidence instead of exposing only the requested backend policy.
+- Analysis backend inheritance now respects the workflow-level policy; Python is never selected unless
+  it is explicitly requested.
+- Fit and statistical workflows cannot omit their analysis steps, and unsupported branch/filter
+  selection semantics are blocked before Origin is started.
+
 ### Safety
 
 - The external runtime is version-scoped and bootstrapped under a lock; attached Origin sessions

@@ -523,13 +523,45 @@ class WorkflowEngine:
                         worksheet_ref=resolve_worksheet(formula.worksheet_ref),
                         column=formula.column,
                         formula=expression,
+                        row_start=(formula.selection.ranges[0].start if len(formula.selection.ranges) == 1 else 0),
+                        row_end=(formula.selection.ranges[0].end if len(formula.selection.ranges) == 1 else -1),
                         recalculate_mode=formula.recalculate_mode,
                     )
+                    if result.success:
+                        formula_data = _result_data(result)
+                        formula_confirmed = (
+                            formula_data.get("metadata_verified") is True
+                            and formula_data.get("value_readback_verified") is True
+                            and formula_data.get("formula") == expression
+                            and formula_data.get("recalculate_mode")
+                            == formula.recalculate_mode
+                        )
+                        if not formula_confirmed:
+                            result = ResultEnvelope.fail(
+                                "ORIGIN_FORMULA_UNCONFIRMED",
+                                "The step did not create and verify an Origin Set Column Values formula",
+                                data={
+                                    "formula_id": formula.id,
+                                    "expected_formula": expression,
+                                    "expected_recalculate_mode": formula.recalculate_mode,
+                                    "actual": formula_data,
+                                },
+                            )
                 elif stage.id.startswith("analysis:"):
                     analysis_id = stage.id.split(":", 1)[1]
                     analysis = next(item for item in spec.analyses if item.id == analysis_id)
                     outputs = []
                     result = ResultEnvelope.ok({})
+                    resolved_backend_policy = (
+                        spec.execution.backend_policy
+                        if analysis.backend_policy == "inherit"
+                        else analysis.backend_policy
+                    )
+                    resolved_backend = (
+                        "python"
+                        if resolved_backend_policy == "external_explicit"
+                        else "origin_native"
+                    )
                     for y_column in analysis.y_columns:
                         analysis_options = dict(analysis.options)
                         if analysis.method.strip().lower() == "derivative":
@@ -549,15 +581,41 @@ class WorkflowEngine:
                             y_column=y_column,
                             options={
                                 **analysis_options,
-                                "backend": "python" if analysis.backend_policy == "external_explicit" else "origin_native",
+                                "backend": resolved_backend,
                                 "create_operation": analysis.create_operation,
                                 "recalculate_mode": analysis.recalculate_mode,
                             },
+                            row_start=(analysis.selection.ranges[0].start if len(analysis.selection.ranges) == 1 else 0),
+                            row_end=(analysis.selection.ranges[0].end if len(analysis.selection.ranges) == 1 else -1),
+                            row_order=("reverse" if analysis.selection.order == "reverse" else "as_is"),
                         )
                         if not candidate.success:
                             result = candidate
                             break
-                        outputs.append(_result_data(candidate))
+                        candidate_data = _result_data(candidate)
+                        if resolved_backend == "origin_native" and spec.qa.require_native_operations:
+                            native_confirmed = (
+                                analysis.create_operation
+                                and candidate_data.get("backend") == "origin_native"
+                                and candidate_data.get("native_operation_created") is True
+                                and candidate_data.get("editable_in_origin") is True
+                                and bool(candidate_data.get("operation_ref"))
+                                and bool(candidate_data.get("outputs"))
+                            )
+                            if not native_confirmed:
+                                result = ResultEnvelope.fail(
+                                    "NATIVE_ANALYSIS_UNCONFIRMED",
+                                    "The analysis did not create an Origin Analysis Operation with verified native outputs",
+                                    data={
+                                        "analysis_id": analysis.id,
+                                        "y_column": y_column,
+                                        "expected_backend": "origin_native",
+                                        "expected_create_operation": True,
+                                        "actual": candidate_data,
+                                    },
+                                )
+                                break
+                        outputs.append(candidate_data)
                     if result.success:
                         result = ResultEnvelope.ok(outputs[0] if len(outputs) == 1 else {"outputs": outputs})
                 elif stage.id.startswith("plot:"):
