@@ -1,5 +1,6 @@
 import asyncio
 import hashlib
+import importlib
 import json
 
 from origin_com_automation.server import create_server
@@ -22,3 +23,24 @@ def test_v021_tool_surface_has_45_tools_and_stable_schema_digest():
 
     assert len(payload) == 45
     assert hashlib.sha256(encoded).hexdigest() == BASELINE_TOOL_SCHEMA_SHA256
+
+
+def test_mcp_schema_and_helper_modules_preserve_existing_contracts():
+    schemas = importlib.import_module("origin_com_automation.mcp.schemas")
+    helpers = importlib.import_module("origin_com_automation.mcp.helpers")
+
+    range_input = schemas.NativeRangeInput(type="range", value="[Book1]Data!A")
+    decoded = helpers.decode_native_parameter(range_input)
+    expanded = helpers.inline_local_schema_refs(
+        {
+            "$defs": {"Item": {"type": "object", "properties": {"value": {"type": "string"}}}},
+            "properties": {"item": {"$ref": "#/$defs/Item"}},
+        }
+    )
+
+    assert decoded.value == "[Book1]Data!A"
+    assert expanded == {
+        "properties": {
+            "item": {"type": "object", "properties": {"value": {"type": "string"}}}
+        }
+    }
