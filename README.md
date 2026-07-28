@@ -27,6 +27,12 @@ Typical uses include:
 Release evidence is recorded in [0.2.0 validation](docs/VALIDATION-0.2.0.md),
 [0.2.1 validation](docs/VALIDATION-0.2.1.md), and [0.2.2 validation](docs/VALIDATION-0.2.2.md).
 
+**Current stable release:** [v0.2.2](https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.2.2).
+It keeps the lean 0.2.1 task path while improving the internal runtime and code organization.
+The later 0.3.0, 0.3.1, and 0.4.0 workflow experiments were rejected because they increased task
+time and orchestration overhead. They are preserved only as clearly named archive branches and
+are not supported releases. See [Experimental Version Archive](docs/EXPERIMENTAL-VERSIONS.md).
+
 <!-- section:requirements -->
 ## Requirements
 
@@ -55,6 +61,11 @@ Clone or download the repository, open PowerShell in the repository root, and ru
 & '.\scripts\bootstrap.ps1'
 & '.\scripts\diagnose.ps1'
 ```
+
+For a complete Codex plugin installation, download the plugin ZIP from the
+[v0.2.2 GitHub release](https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.2.2).
+The wheel and source distribution are provided separately for Python package use.
+`SHA256SUMS.txt` in the release assets records every package checksum.
 
 The MCP server uses `.mcp.json` to call `scripts/run_mcp.ps1`. The launcher resolves the manifest
 version and starts the matching external runtime. Install or refresh the personal Codex plugin with:

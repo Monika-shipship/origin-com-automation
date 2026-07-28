@@ -34,6 +34,11 @@ Origin 自己的自动化接口。你可以用自然语言描述任务，插件�
 版本验证记录见 [0.2.0 验证报告](docs/VALIDATION-0.2.0.md)、
 [0.2.1 验证报告](docs/VALIDATION-0.2.1.md) 和 [0.2.2 验证报告](docs/VALIDATION-0.2.2.md)。
 
+**当前稳定版本：**[v0.2.2](https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.2.2)。
+它保留了 0.2.1 干练的任务路径，只改进内部运行环境和代码组织。后续 0.3.0、0.3.1 和
+0.4.0 工作流实验因明显增加任务耗时与调度负担而被放弃，仅保存在名称明确的归档分支中，
+不作为受支持版本。详情见[实验版本归档说明](docs/EXPERIMENTAL-VERSIONS.md)。
+
 <!-- section:requirements -->
 ## 运行环境
 
@@ -61,6 +66,10 @@ pywin32、MCP、Pydantic、NumPy/SciPy、OpenPyXL、Pillow、psutil、pandas 和
 & '.\scripts\bootstrap.ps1'
 & '.\scripts\diagnose.ps1'
 ```
+
+如需安装完整 Codex 插件，可从 [v0.2.2 GitHub Release](https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.2.2)
+下载插件 ZIP；wheel 和源码发行包单独用于 Python 包安装。Release 附件中的
+`SHA256SUMS.txt` 记录了所有安装包校验值。
 
 `.mcp.json` 调用 `scripts/run_mcp.ps1`，启动器根据 manifest 版本选择对应的外部运行环境。
 然后把插件安装或更新到个人 Codex marketplace：

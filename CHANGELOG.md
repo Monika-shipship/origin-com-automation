@@ -1,5 +1,15 @@
 # Changelog
 
+## Release policy
+
+`0.2.2` is the current stable line. Versions `0.3.0`, `0.3.1`, and `0.4.0` were local workflow
+experiments that increased execution time and orchestration complexity. They are preserved in
+`archive/failed-v0.3.0`, `archive/failed-v0.3.1`, and `archive/failed-v0.4.0` for historical study,
+but are not releases, are not supported, and are not part of `main`.
+
+See [Experimental Version Archive](docs/EXPERIMENTAL-VERSIONS.md) for the exact snapshots and
+reasons for rejection.
+
 ## [0.2.2] - 2026-07-28
 
 This is a maintenance release built on the lean 0.2.1 execution path.
