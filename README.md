@@ -3,8 +3,8 @@
 </p>
 <h1 align="center">Origin COM Automation</h1>
 <p align="center">Ask Codex to turn data and existing Origin projects into editable analyses, graphs, and verified output files.</p>
-[![Stable v0.2.3](https://img.shields.io/badge/stable-v0.2.3-DF5B3F)](https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.2.3)
-[![Release gates](https://img.shields.io/badge/release-gates-2E7D6E)](https://github.com/Sheldon12311815/origin-com-automation/actions/workflows/unit-tests.yml)
+[![Stable v0.2.3](https://img.shields.io/badge/stable-v0.2.3-DF5B3F)](https://github.com/Dawn-zxj/origin-com-automation/releases/tag/v0.2.3)
+[![Release gates](https://img.shields.io/badge/release-gates-2E7D6E)](https://github.com/Dawn-zxj/origin-com-automation/actions/workflows/unit-tests.yml)
 [![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](#requirements)
 [![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](#requirements)
 [![Origin verified 2024b](https://img.shields.io/badge/Origin_verified-2024b-DF5B3F)](docs/VALIDATION-0.2.3.md)
@@ -82,7 +82,7 @@ For more request patterns and critical paths, see the [User Guide](docs/USER-GUI
 Install the stable plugin from its Git marketplace:
 
 ```powershell
-codex plugin marketplace add Sheldon12311815/origin-com-automation --ref marketplace
+codex plugin marketplace add Dawn-zxj/origin-com-automation --ref marketplace
 codex plugin add origin-com-automation@origin-automation-marketplace
 ```
 
@@ -96,7 +96,7 @@ codex plugin add origin-com-automation@origin-automation-marketplace
 ```
 
 As a fallback, download the plugin ZIP from the
-[v0.2.3 release](https://github.com/Sheldon12311815/origin-com-automation/releases/tag/v0.2.3),
+[v0.2.3 release](https://github.com/Dawn-zxj/origin-com-automation/releases/tag/v0.2.3),
 extract it, run `scripts\bootstrap.ps1`, and install that local plugin directory in Codex.
 
 <a id="requirements"></a>

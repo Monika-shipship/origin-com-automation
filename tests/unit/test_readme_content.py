@@ -116,14 +116,14 @@ def _assert_badge_destinations(
     assert version_target.scheme.casefold() == "https"
     assert version_target.netloc.casefold() == "github.com"
     assert version_target.path.rstrip("/").casefold() == (
-        "/sheldon12311815/origin-com-automation/releases/tag/v0.2.3"
+            "/dawn-zxj/origin-com-automation/releases/tag/v0.2.3"
     )
 
     gates_target = urlsplit(badges["release-gates"]["target"])
     assert gates_target.scheme.casefold() == "https"
     assert gates_target.netloc.casefold() == "github.com"
     assert gates_target.path.rstrip("/").casefold() == (
-        "/sheldon12311815/origin-com-automation/actions/workflows/unit-tests.yml"
+            "/dawn-zxj/origin-com-automation/actions/workflows/unit-tests.yml"
     )
 
     anchors = _document_anchors(text)
@@ -224,7 +224,7 @@ def test_readmes_include_a_six_field_request_template_and_four_prompt_scenarios(
 
 def test_readmes_document_marketplace_install_and_update_commands():
     commands = (
-        "codex plugin marketplace add Sheldon12311815/origin-com-automation --ref marketplace",
+        "codex plugin marketplace add Dawn-zxj/origin-com-automation --ref marketplace",
         "codex plugin add origin-com-automation@origin-automation-marketplace",
         "codex plugin marketplace upgrade origin-automation-marketplace",
     )

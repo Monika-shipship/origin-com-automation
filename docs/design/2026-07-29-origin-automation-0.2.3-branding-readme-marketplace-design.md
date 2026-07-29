@@ -125,7 +125,7 @@ Its marketplace name will be `origin-automation-marketplace`. It will pin the cu
 Install commands:
 
 ```powershell
-codex plugin marketplace add Sheldon12311815/origin-com-automation --ref marketplace
+codex plugin marketplace add Dawn-zxj/origin-com-automation --ref marketplace
 codex plugin add origin-com-automation@origin-automation-marketplace
 ```
 
