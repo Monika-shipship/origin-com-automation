@@ -26,6 +26,8 @@ def test_mcp_uses_external_versioned_non_editable_runtime():
     assert "manifest.version" in runtime_path
     assert "runtime_path.ps1" in launcher
     assert "pythonnousersite" in launcher
+    assert "bootstrap.ps1') -runtimeroot $runtimeroot 2>&1 | foreach-object" in launcher
+    assert "[console]::error.writeline($_.tostring())" in launcher
     assert "fileshare]::none" in bootstrap
     assert ".bootstrap.lock" in bootstrap
     assert "pip install -e" not in bootstrap

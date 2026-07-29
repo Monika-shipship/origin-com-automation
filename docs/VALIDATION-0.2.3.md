@@ -1,6 +1,6 @@
 # Origin COM Automation 0.2.3 Validation
 
-Candidate: `0.2.3+codex.20260728185943`
+Candidate: `0.2.3+codex.20260729080255`
 
 ## Scope
 
@@ -21,8 +21,11 @@ The preserved public contract is exactly 45 tools with schema digest:
 - mypy: passed for 53 source files.
 - Brand asset tests: the SVG master is reproducible and both PNG assets are present, correctly
   sized, nonblank, and referenced by the plugin manifest.
-- Final full suite, package build, dependency check, release audit, plugin/Skill validators, and
-  distribution validator: pending final release-gate run.
+- Final full suite: `287 passed, 8 skipped`.
+- Wheel and source distribution build, Ruff, mypy, release audit, plugin validator, Skill
+  validator, and distribution validator: passed.
+- A fresh external runtime bootstrap kept dependency-install output on stderr, exposed exactly 45
+  MCP tools, preserved the schema digest above, and returned a successful health check.
 
 ## Live Origin Validation
 
@@ -36,9 +39,10 @@ process existed before the bounded test run.
 - Graph preview, pixel inspection, layout handling, and template discovery completed successfully.
 - Each test used a plugin-owned Origin instance and shut it down through its owned COM proxy.
 
-Installed marketplace transport and downloaded release assets remain pending until the final
-candidate is committed, packaged, and installed. They will not be reported as verified before that
-work succeeds.
+The marketplace snapshot's real stdio entry point was validated from a fresh version-scoped,
+non-editable runtime. Codex App cache installation is not claimed as verified on this machine
+because the packaged Windows Store `codex.exe` returned `Access is denied`; the source snapshot,
+manifest, icon paths, distribution structure, and MCP transport were validated independently.
 
 ## Known Limits
 
