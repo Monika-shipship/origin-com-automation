@@ -16,7 +16,9 @@ SECTION_MARKER = re.compile(r"<!-- section:([a-z0-9-]+) -->")
 TOOL_NAME = re.compile(r'@strict_tool\(name="([a-z0-9_]+)"\)')
 MARKDOWN_LINK = re.compile(r"\[[^\]]+\]\(([^)]+)\)")
 CLICKABLE_BADGE = re.compile(
-    r"\[!\[(?P<label>[^\]]+)\]\((?P<image>[^)]+)\)\]\((?P<target>[^)]+)\)"
+    r'<a\s+href="(?P<target>[^"]+)"><img\s+alt="(?P<label>[^"]+)"\s+'
+    r'src="(?P<image>[^"]+)"></a>',
+    re.IGNORECASE,
 )
 MARKDOWN_HEADING = re.compile(r"^#{1,6}\s+(.+?)\s*#*\s*$", re.MULTILINE)
 HTML_ANCHOR = re.compile(
@@ -116,14 +118,14 @@ def _assert_badge_destinations(
     assert version_target.scheme.casefold() == "https"
     assert version_target.netloc.casefold() == "github.com"
     assert version_target.path.rstrip("/").casefold() == (
-            "/dawn-zxj/origin-com-automation/releases/tag/v0.2.3"
+        "/dawn-zxj/origin-com-automation/releases/tag/v0.2.3"
     )
 
     gates_target = urlsplit(badges["release-gates"]["target"])
     assert gates_target.scheme.casefold() == "https"
     assert gates_target.netloc.casefold() == "github.com"
     assert gates_target.path.rstrip("/").casefold() == (
-            "/dawn-zxj/origin-com-automation/actions/workflows/unit-tests.yml"
+        "/dawn-zxj/origin-com-automation/actions/workflows/unit-tests.yml"
     )
 
     anchors = _document_anchors(text)
@@ -164,8 +166,8 @@ def test_readmes_link_languages_show_the_logo_and_have_meaningful_badges():
     english = _read(ENGLISH)
     chinese = _read(CHINESE)
 
-    assert "[简体中文](README.zh-CN.md)" in english
-    assert "[English](README.md)" in chinese
+    assert '<a href="README.zh-CN.md">简体中文</a>' in english
+    assert '<a href="README.md">English</a>' in chinese
     for readme_path, text in ((ENGLISH, english), (CHINESE, chinese)):
         assert "assets/origin-automation-logo.png" in text
         badges_by_purpose = _badges_by_purpose(text)
