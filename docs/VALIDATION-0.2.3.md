@@ -1,6 +1,6 @@
 # Origin COM Automation 0.2.3 Validation
 
-Candidate: `0.2.3+codex.20260729081004`
+Candidate: `0.2.3+codex.20260729140141`
 
 ## Scope
 
