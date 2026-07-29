@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "origin-com-automation"
+version = "0.2.3"
+description = "Safe serialized Origin COM automation for Codex"
+requires-python = ">=3.11"
+dependencies = [
+  "mcp==1.28.1",
+  "numpy>=2.2,<3.0",
+  "openpyxl>=3.1,<4.0",
+  "pandas>=2.2,<3.0",
+  "Pillow>=11.0,<13.0",
+  "pydantic>=2.6,<3.0",
+  "psutil>=7.0,<8.0",
+  "pywin32==312; platform_system == 'Windows'",
+  "scipy>=1.15,<2.0",
+  "xlrd>=2.0,<3.0",
+  "typing-extensions>=4.9,<5.0",
+]
+
+[project.optional-dependencies]
+test = [
+  "build>=1.2,<2.0",
+  "mypy>=1.16,<2.0",
+  "PyYAML>=6.0,<7.0",
+  "pytest>=8.0,<9.0",
+  "ruff>=0.12,<0.15",
+  "types-psutil>=7.0,<8.0",
+]
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+origin_com_automation = ["graphs/*.json", "resources/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+markers = [
+  "integration: requires a separately owned Origin COM instance",
+  "smoke: live Origin smoke test",
+]
+
+[tool.ruff]
+target-version = "py311"
+
+[tool.mypy]
+python_version = "3.13"
+files = ["src/origin_com_automation"]
+ignore_missing_imports = true
+follow_imports = "silent"
+check_untyped_defs = true
+warn_unused_ignores = true
+disable_error_code = [
+  "arg-type",
+  "assignment",
+  "attr-defined",
+  "call-arg",
+  "call-overload",
+  "dict-item",
+  "index",
+  "misc",
+  "no-redef",
+  "operator",
+  "return-value",
+  "union-attr",
+  "var-annotated",
+]

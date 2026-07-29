@@ -1,0 +1,32 @@
+{
+  "name": "origin-com-automation",
+  "version": "0.2.3+codex.20260729080255",
+  "description": "Safe serialized Origin COM automation for data analysis, plotting, and export.",
+  "author": {
+    "name": "Dawn"
+  },
+  "homepage": "https://github.com/Sheldon12311815/origin-com-automation",
+  "repository": "https://github.com/Sheldon12311815/origin-com-automation",
+  "license": "MIT",
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Origin COM Automation",
+    "shortDescription": "Control Origin safely from Codex.",
+    "longDescription": "Start an owned Origin instance, inspect and copy projects, run explicit analyses, create graphs, and export validated artifacts through a local Python COM bridge.",
+    "developerName": "Dawn",
+    "category": "Productivity",
+    "brandColor": "#DF5B3F",
+    "composerIcon": "./assets/origin-automation-composer.png",
+    "logo": "./assets/origin-automation-logo.png",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Diagnose Origin COM without opening a project.",
+      "Analyze this Origin worksheet and create a plot.",
+      "Export the named Origin graph to a validated PNG."
+    ]
+  },
+  "mcpServers": "./.mcp.json"
+}

@@ -1,0 +1,24 @@
+{
+  "scientific_default": {
+    "colors": ["#1F77B4", "#D62728", "#2CA02C", "#9467BD", "#FF7F0E", "#17BECF"],
+    "max_series": 6,
+    "colorblind_safe": false,
+    "grayscale_safe": false,
+    "notes": "General scientific series palette with distinct hue and luminance."
+  },
+  "colorblind_safe": {
+    "colors": ["#0072B2", "#D55E00", "#009E73", "#CC79A7", "#E69F00", "#56B4E9"],
+    "max_series": 6,
+    "colorblind_safe": true,
+    "grayscale_safe": false,
+    "notes": "Use markers or line styles as an additional redundant encoding."
+  },
+  "sequential_viridis": {
+    "colors": ["#440154", "#3B528B", "#21918C", "#5EC962", "#FDE725"],
+    "max_series": 5,
+    "colorblind_safe": true,
+    "grayscale_safe": true,
+    "notes": "Ordered values only; do not use for unordered categories."
+  }
+}
+

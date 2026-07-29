@@ -1,0 +1,20 @@
+{
+  "name": "origin-automation-marketplace",
+  "interface": {
+    "displayName": "Origin Automation Marketplace"
+  },
+  "plugins": [
+    {
+      "name": "origin-com-automation",
+      "source": {
+        "source": "local",
+        "path": "./plugins/origin-com-automation"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

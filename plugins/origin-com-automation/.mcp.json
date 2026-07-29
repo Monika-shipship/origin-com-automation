@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "origin-com-automation": {
+      "command": "powershell.exe",
+      "args": ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", ".\\scripts\\run_mcp.ps1"],
+      "cwd": ".",
+      "tool_timeout_sec": 900
+    }
+  }
+}

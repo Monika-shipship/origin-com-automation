@@ -1,0 +1,112 @@
+[
+  {
+    "id": "worksheet.set-column-values",
+    "domain": "worksheet",
+    "title": "Origin Set Column Values formulas",
+    "summary": "Use csetvalue through origin_set_column_formula to preserve the F(x) formula, Before Formula Script, row range, and recalculation mode. Verify Formula, Script, FormulaRange, SVRM, and output values.",
+    "official_url": "https://www.originlab.com/doc/LabTalk/ref/wkscolformula/",
+    "min_origin": null,
+    "status": "verified",
+    "keywords": ["csetvalue", "F(x)", "column formula", "SVRM"],
+    "tools": ["origin_set_column_formula", "origin_transform_worksheet"]
+  },
+  {
+    "id": "data.linked-import",
+    "domain": "connector",
+    "title": "Linked import from local files",
+    "summary": "The default linked import creates a persistent CSV or Excel Data Connector, verifies its canonical source and hash, and checks destination cells against the source. Snapshot import is explicit.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Data-Connector",
+    "min_origin": "9.6",
+    "status": "verified",
+    "keywords": ["linked import", "Data Connector", "source_mode", "refresh"],
+    "tools": ["origin_import_data", "origin_manage_connector"]
+  },
+  {
+    "id": "analysis.op-change",
+    "domain": "analysis",
+    "title": "Read and run Analysis Operations with op_change",
+    "summary": "Use an explicit operation range. op:=get reads the operation tree and op:=run recalculates it. This plugin tracks only operations it created.",
+    "official_url": "https://docs.originlab.com/x-function/ref/op_change/",
+    "min_origin": null,
+    "status": "verified",
+    "keywords": ["op_change", "recalculate", "analysis operation"],
+    "tools": ["origin_get_analysis_operation", "origin_recalculate_analysis"]
+  },
+  {
+    "id": "analysis.x-function",
+    "domain": "analysis",
+    "title": "Structured X-Function execution",
+    "summary": "Prefer allowlisted parameters and typed range, output, file, and scalar values. Unverified X-Functions require explicit opt-in.",
+    "official_url": "https://docs.originlab.com/x-function/",
+    "min_origin": null,
+    "status": "verified",
+    "keywords": ["X-Function", "LabTalk", "parameters"],
+    "tools": ["origin_run_xfunction"]
+  },
+  {
+    "id": "data.connector",
+    "domain": "connector",
+    "title": "Origin Data Connectors",
+    "summary": "Create, inspect, refresh, and disconnect CSV or Excel connectors while preserving an explicit keep-data policy.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Data-Connector",
+    "min_origin": "9.6",
+    "status": "verified",
+    "keywords": ["Data Connector", "CSV", "Excel", "refresh"],
+    "tools": ["origin_import_data", "origin_manage_connector"]
+  },
+  {
+    "id": "matrix.matrixbook",
+    "domain": "matrix",
+    "title": "Matrix books and sheets",
+    "summary": "Matrix data uses stable matrix-sheet references and rectangular finite blocks. Readback is required after writes.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Matrixbooks-Matrixsheets",
+    "min_origin": null,
+    "status": "supported_unverified",
+    "keywords": ["Matrix", "Matrixbook", "heatmap", "surface"],
+    "tools": ["origin_manage_matrix"]
+  },
+  {
+    "id": "graph.templates",
+    "domain": "graph",
+    "title": "Graph templates",
+    "summary": "Discover templates beneath explicit roots and apply only a selected .otp or .otpu whose SHA-256 still matches.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Graph-Template",
+    "min_origin": null,
+    "status": "supported_unverified",
+    "keywords": ["graph template", "otp", "otpu"],
+    "tools": ["origin_list_graph_templates", "origin_apply_graph_template"]
+  },
+  {
+    "id": "graph.plot-types",
+    "domain": "graph",
+    "title": "Origin plot types",
+    "summary": "Select graph types by exact required data roles. Matrix plots and worksheet plots are not interchangeable.",
+    "official_url": "https://www.originlab.com/doc/LabTalk/ref/Plot-Type-IDs",
+    "min_origin": null,
+    "status": "verified",
+    "keywords": ["Origin", "plot type", "2D", "3D", "polar", "ternary"],
+    "tools": ["origin_graph_catalog", "origin_create_graph"]
+  },
+  {
+    "id": "project.explorer",
+    "domain": "project",
+    "title": "Project Explorer folders",
+    "summary": "Use full project paths and never recursively delete a non-empty folder without explicit confirmation.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Project-Explorer",
+    "min_origin": null,
+    "status": "supported_unverified",
+    "keywords": ["Origin", "Project Explorer", "folder"],
+    "tools": ["origin_manage_project_folder"]
+  },
+  {
+    "id": "workflow.figurespec",
+    "domain": "workflow",
+    "title": "Digest-bound FigureSpec workflows",
+    "summary": "Plan once, bind the exact specification digest, execute serial stages, and stop at the first failure.",
+    "official_url": "https://www.originlab.com/doc/Origin-Help/Origin-Project-File",
+    "min_origin": null,
+    "status": "verified",
+    "keywords": ["Origin", "FigureSpec", "batch", "workflow"],
+    "tools": ["origin_plan_figure", "origin_execute_figure", "origin_submit_batch"]
+  }
+]
