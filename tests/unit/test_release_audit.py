@@ -1,5 +1,8 @@
+import ast
 import json
+import re
 import subprocess
+import tomllib
 from pathlib import Path
 
 from scripts.release_audit import audit_repository
@@ -84,20 +87,60 @@ def test_release_audit_detects_manifest_package_version_drift(tmp_path: Path):
     assert any(item["code"] == "version_mismatch" for item in report["errors"])
 
 
-def test_v022_release_metadata_and_runtime_documentation_are_consistent():
+def test_v023_release_metadata_and_brand_assets_are_consistent():
     root = Path(__file__).resolve().parents[2]
     manifest = json.loads((root / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-    package = (root / "pyproject.toml").read_text(encoding="utf-8")
-    runtime = (root / "src" / "origin_com_automation" / "__init__.py").read_text(encoding="utf-8")
-    english = (root / "README.md").read_text(encoding="utf-8")
-    chinese = (root / "README.zh-CN.md").read_text(encoding="utf-8")
+    package = tomllib.loads((root / "pyproject.toml").read_text(encoding="utf-8"))
+    runtime_tree = ast.parse(
+        (root / "src" / "origin_com_automation" / "__init__.py").read_text(
+            encoding="utf-8"
+        )
+    )
+    runtime_version = next(
+        node.value.value
+        for node in runtime_tree.body
+        if isinstance(node, ast.Assign)
+        and any(
+            isinstance(target, ast.Name) and target.id == "__version__"
+            for target in node.targets
+        )
+        and isinstance(node.value, ast.Constant)
+        and isinstance(node.value.value, str)
+    )
+    interface = manifest["interface"]
 
-    assert manifest["version"].startswith("0.2.2+")
-    assert 'version = "0.2.2"' in package
-    assert '__version__ = "0.2.2"' in runtime
-    assert "0.2.2" in english and "0.2.2" in chinese
-    assert "LOCALAPPDATA" in english and "LOCALAPPDATA" in chinese
-    assert (root / "CHANGELOG.md").is_file()
+    assert manifest["version"].startswith("0.2.3+")
+    assert package["project"]["version"] == "0.2.3"
+    assert runtime_version == "0.2.3"
+    assert interface.get("brandColor") == "#DF5B3F"
+    assert interface.get("composerIcon") == "./assets/origin-automation-composer.png"
+    assert interface.get("logo") == "./assets/origin-automation-logo.png"
+    for asset_path in (interface["composerIcon"], interface["logo"]):
+        assert (root / asset_path.removeprefix("./")).is_file()
+
+
+def test_v023_readmes_identify_the_release_and_link_its_validation_record():
+    root = Path(__file__).resolve().parents[2]
+    validation_link = re.compile(
+        r"\[[^\]]+\]\(docs/VALIDATION-0\.2\.3\.md(?:#[^)]+)?\)"
+    )
+
+    for readme_name in ("README.md", "README.zh-CN.md"):
+        readme = (root / readme_name).read_text(encoding="utf-8")
+        assert "0.2.3" in readme
+        assert validation_link.search(readme)
+
+
+def test_v023_release_document_set_exists():
+    root = Path(__file__).resolve().parents[2]
+    expected_documents = (
+        "CHANGELOG.md",
+        "docs/VALIDATION-0.2.3.md",
+        "docs/releases/v0.2.3.md",
+    )
+
+    missing = [path for path in expected_documents if not (root / path).is_file()]
+    assert missing == []
 
 
 def test_release_audit_detects_runtime_package_version_drift(tmp_path: Path):

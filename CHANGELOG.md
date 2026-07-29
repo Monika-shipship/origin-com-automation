@@ -2,13 +2,25 @@
 
 ## Release policy
 
-`0.2.2` is the current stable line. Versions `0.3.0`, `0.3.1`, and `0.4.0` were local workflow
+`0.2.3` is the current stable line. Versions `0.3.0`, `0.3.1`, and `0.4.0` were local workflow
 experiments that increased execution time and orchestration complexity. They are preserved in
 `archive/failed-v0.3.0`, `archive/failed-v0.3.1`, and `archive/failed-v0.4.0` for historical study,
 but are not releases, are not supported, and are not part of `main`.
 
 See [Experimental Version Archive](docs/EXPERIMENTAL-VERSIONS.md) for the exact snapshots and
 reasons for rejection.
+
+## [0.2.3] - 2026-07-29
+
+This presentation and distribution release is scoped to:
+
+- A Plot Workspace icon for the Codex plugin interface.
+- User-first bilingual English and Simplified Chinese README presentation.
+- Git marketplace distribution.
+
+Exactly 45 MCP tools, their schemas, and execution behavior remain unchanged. This release adds no
+workflow, runtime, or scientific default changes. README, marketplace, and release validation
+evidence will be completed separately as part of the 0.2.3 release work.
 
 ## [0.2.2] - 2026-07-28
 
