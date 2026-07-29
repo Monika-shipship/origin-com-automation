@@ -6,9 +6,9 @@ branch continues from 0.2.1 to 0.2.2 without these experiments.
 
 | Experimental version | Archive branch | Snapshot commit | Status |
 |---|---|---|---|
-| 0.3.0 | [`archive/failed-v0.3.0`](https://github.com/Sheldon12311815/origin-com-automation/tree/archive/failed-v0.3.0) | `ed3cf71` | Rejected |
-| 0.3.1 | [`archive/failed-v0.3.1`](https://github.com/Sheldon12311815/origin-com-automation/tree/archive/failed-v0.3.1) | `aa8789f` | Rejected |
-| 0.4.0 | [`archive/failed-v0.4.0`](https://github.com/Sheldon12311815/origin-com-automation/tree/archive/failed-v0.4.0) | `a9cb614` | Rejected |
+| 0.3.0 | [`archive/failed-v0.3.0`](https://github.com/Dawn-zxj/origin-com-automation/tree/archive/failed-v0.3.0) | `ed3cf71` | Rejected |
+| 0.3.1 | [`archive/failed-v0.3.1`](https://github.com/Dawn-zxj/origin-com-automation/tree/archive/failed-v0.3.1) | `aa8789f` | Rejected |
+| 0.4.0 | [`archive/failed-v0.4.0`](https://github.com/Dawn-zxj/origin-com-automation/tree/archive/failed-v0.4.0) | `a9cb614` | Rejected |
 
 ## Why they were rejected
 
