@@ -3,14 +3,16 @@
 </p>
 <h1 align="center">Origin COM Automation</h1>
 <p align="center">告诉 Codex 你需要的数据处理、分析和绘图，让它生成可在 Origin 中继续编辑并经过核验的结果。</p>
-[![Stable v0.2.3](https://img.shields.io/badge/stable-v0.2.3-DF5B3F)](https://github.com/Dawn-zxj/origin-com-automation/releases/tag/v0.2.3)
-[![Release gates](https://img.shields.io/badge/release-gates-2E7D6E)](https://github.com/Dawn-zxj/origin-com-automation/actions/workflows/unit-tests.yml)
-[![Windows x64](https://img.shields.io/badge/Windows-x64-0078D4)](#requirements)
-[![Python 3.11+](https://img.shields.io/badge/Python-3.11%2B-3776AB)](#requirements)
-[![Origin verified 2024b](https://img.shields.io/badge/Origin_verified-2024b-DF5B3F)](docs/VALIDATION-0.2.3.md)
-[![Codex Plugin](https://img.shields.io/badge/Codex-Plugin-111111)](#installation)
-[![MIT License](https://img.shields.io/badge/license-MIT-2E7D6E)](LICENSE)
-<p align="center">[English](README.md) | <strong>简体中文</strong></p>
+<p align="center">
+  <a href="https://github.com/Dawn-zxj/origin-com-automation/releases/tag/v0.2.3"><img alt="Stable v0.2.3" src="https://img.shields.io/badge/stable-v0.2.3-DF5B3F"></a>
+  <a href="https://github.com/Dawn-zxj/origin-com-automation/actions/workflows/unit-tests.yml"><img alt="Release gates" src="https://img.shields.io/badge/release-gates-2E7D6E"></a>
+  <a href="#requirements"><img alt="Windows x64" src="https://img.shields.io/badge/Windows-x64-0078D4"></a>
+  <a href="#requirements"><img alt="Python 3.11+" src="https://img.shields.io/badge/Python-3.11%2B-3776AB"></a>
+  <a href="docs/VALIDATION-0.2.3.md"><img alt="Origin verified 2024b" src="https://img.shields.io/badge/Origin_verified-2024b-DF5B3F"></a>
+  <a href="#installation"><img alt="Codex Plugin" src="https://img.shields.io/badge/Codex-Plugin-111111"></a>
+  <a href="LICENSE"><img alt="MIT License" src="https://img.shields.io/badge/license-MIT-2E7D6E"></a>
+</p>
+<p align="center"><a href="README.md">English</a> | <strong>简体中文</strong></p>
 
 <!-- section:what-it-does -->
 ## 它能做什么
