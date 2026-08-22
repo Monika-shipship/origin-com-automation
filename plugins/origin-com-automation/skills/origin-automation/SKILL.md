@@ -78,7 +78,7 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - **Validation mismatch:** inspect the mismatched data/source/property once and make one targeted correction. Re-run only the failed verification, not the whole workflow.
 - **Transient read failure:** rely on the plugin's bounded internal retry. Do not add another manual retry loop.
 - **Write, analysis, save, export, timeout, or RPC failure:** never replay blindly. If the same failure repeats after the single targeted correction, stop, safely shut down when possible, and report the exact blocker.
-- **First COM timeout:** call `origin_recover_session` immediately on the same MCP server process. Do not start a new stdio server or call `origin_shutdown` first because the poisoned state and STA worker are process-local. Start a fresh owned session only after recovery, and never replay the timed-out mutation unless the user explicitly authorizes it after inspecting state.
+- **First COM timeout:** call `origin_recover_session` immediately on the same MCP server process. Do not call `origin_shutdown` first, and do not start a new stdio server, because the poisoned state and STA worker are process-local. Start a fresh owned session only after recovery, and never replay the timed-out mutation unless the user explicitly authorizes it after inspecting state.
 - **FigureSpec planning blocker:** report the exact blocker. Move to focused tools only when the
   requested feature is supported there and the scientific intent remains unchanged; do not weaken
   the spec or set `allow_unverified=true` on the user's behalf.

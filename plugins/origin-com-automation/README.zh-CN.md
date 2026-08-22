@@ -102,8 +102,11 @@ codex plugin add origin-com-automation@origin-automation-marketplace
 ### 系统要求
 
 - 64 位 Windows，以及 64 位 Python 3.11 或更新版本。
-- 已验证版本为 Origin 2024b；其他兼容的 64 位 Origin COM server 可能可用，但在完成对应版本验证前
-  属于版本相关能力。
+- 当前兼容分支已在 OriginPro 2021 `9.8.0.200` 上完成实机验证。
+- 原始上游 v0.2.3 基线已在 Origin 2024b `10.1.0.178` 上实测；当前兼容提交有自动回归覆盖，
+  但尚未在 2024b 上重新完成实机遍历。
+- Origin 2021b `9.85` 至 2024a 在逐版本实测前仍属于版本相关能力。
+- 早于 Origin 2021 `9.8` 的版本、32 位 Origin 和 32 位 Python 不支持。
 - 已注册 `Origin.Application`、`Origin.ApplicationCOMSI` 或 `Origin.ApplicationSI` ProgID。
 - 支持本地插件和 MCP 的 Codex。
 
@@ -129,9 +132,15 @@ runtime，不修改系统 Python。
 
 | 状态 | 含义 |
 |---|---|
-| 已验证 | 2024b 验证记录覆盖核心 owned 会话、本地 CSV/Excel 导入、工作表回读、Origin `F(x)`、原生线性拟合重算、保存/重开、常见项目对象、基础图形、预览和串行工作流。 |
+| 当前分支已验证 | OriginPro 2021 `9.8.0.200`：292 项单元/回归测试；源码与安装包各 41/41 项针对性实机检查；FigureSpec 预检与端到端验证；45/45 MCP 工具注册和健康检查。 |
+| 上游基线已验证 | 原始 v0.2.3 在 Origin 2024b `10.1.0.178` 上通过；这不等同于当前兼容提交已经在 2024b 上重新实测。 |
 | 版本相关 | 通用白名单 X-Function、Analysis Template、专业图形类型、部分布局/模板，以及较少使用的 Matrix/Image/Folder 操作需要能力检查；某些操作还需要明确允许。 |
 | 不支持 | 需要认证的远程 Connector、把 PID 差异当作 COM 所有权证明，或只根据观察到的 PID 强制结束 Origin。 |
+
+Origin 2021（9.8）没有真实 Image Page（9.85 才引入），`expGraph` 不支持 SVG，也没有经过验证、
+可在不破坏图层/数据绑定的前提下把 OTP 应用到现有图的适配器。这些路径会在修改前返回明确的
+版本错误。含 Origin 演示版水印的 PNG/TIFF/PDF 只保留为诊断产物，不会报告为成功交付；插件
+不会移除水印或绕过许可证。
 
 插件不会把“没有抛出异常”当成科学结果正确的证据。请用 `origin_capabilities` 检查当前 Origin
 版本，并在 [0.2.3 验证记录](docs/VALIDATION-0.2.3.md)中查看准确证据。
@@ -187,6 +196,7 @@ LabTalk 和 X-Function 是 OriginLab Corporation 的产品或技术名称，相�
 - [完整工具参考](docs/TOOL-REFERENCE.md)
 - [架构与安全](docs/ARCHITECTURE.md)
 - [0.2.3 验证记录](docs/VALIDATION-0.2.3.md)
+- [Origin 2021 兼容性更新与验证范围](docs/ORIGIN-2021-COMPATIBILITY.md)
 - [以往验证：0.2.0](docs/VALIDATION-0.2.0.md)、[0.2.1](docs/VALIDATION-0.2.1.md)和[0.2.2](docs/VALIDATION-0.2.2.md)
 - [实验版本存档](docs/EXPERIMENTAL-VERSIONS.md)
 - [参考与归属](docs/REFERENCES.md)

@@ -35,6 +35,11 @@ and native Analysis Operations, save a separate project, export figures, and che
 - Save a new OPJU, export version-supported graph formats, preview graphs, and verify bindings,
   artifacts, and demo-license watermark status. Origin 9.8 supports PNG/TIFF/PDF but not SVG.
 
+The compatibility update in manifest `0.2.3+codex.20260822062434` was live-tested on
+OriginPro 2021 `9.8.0.200`. See the
+[Origin 2021 compatibility record](docs/ORIGIN-2021-COMPATIBILITY.md) for the exact version
+matrix, changes from upstream v0.2.3, test evidence, and known limits.
+
 <!-- section:ask-codex -->
 ## What To Tell Codex
 
@@ -106,8 +111,11 @@ extract it, run `scripts\bootstrap.ps1`, and install that local plugin directory
 ### Requirements
 
 - 64-bit Windows and 64-bit Python 3.11 or newer.
-- Origin 2024b is the verified release; another compatible 64-bit Origin COM server may work but
-  remains version-dependent until validated.
+- This compatibility fork is live-verified on OriginPro 2021 `9.8.0.200`.
+- The original upstream v0.2.3 baseline was live-verified on Origin 2024b `10.1.0.178`; this
+  compatibility commit has regression coverage but was not rerun live on 2024b.
+- Origin 2021b `9.85` through 2024a remains version-dependent until each release is live-tested.
+- Releases earlier than Origin 2021 `9.8`, 32-bit Origin, and 32-bit Python are unsupported.
 - A registered `Origin.Application`, `Origin.ApplicationCOMSI`, or `Origin.ApplicationSI` ProgID.
 - Codex with local plugin and MCP support.
 
@@ -139,15 +147,16 @@ The bootstrap creates a version-scoped runtime under
 
 | Status | Meaning |
 |---|---|
-| Verified | The 2024b validation record covers core owned-session work, local CSV/Excel import, worksheet readback, Origin `F(x)`, native linear-fit recalculation, save/reopen, common project objects, basic graphs, previews, and serial workflows. |
+| Verified in this fork | OriginPro 2021 `9.8.0.200`: 292 unit/regression tests, 41/41 targeted live checks against both source and installed package, FigureSpec preflight/end-to-end validation, and 45/45 MCP tool registration plus health checks. |
+| Verified upstream baseline | Original v0.2.3 on Origin 2024b `10.1.0.178`; do not treat this as a live 2024b rerun of the compatibility commit. |
 | Version-dependent | Generic allowlisted X-Functions, analysis templates, specialized graph families, some layout/template operations, and less common Matrix/Image/Folder actions require capability checks and explicit opt-in where requested. |
+| Unsupported | Authenticated remote connectors, treating a PID difference as proof of COM ownership, or force-terminating Origin from PID observation alone. |
 
 Origin 2021 (9.8) does not expose real Image Pages (introduced in 9.85), does not support SVG via
 `expGraph`, and has no verified non-destructive adapter for applying an OTP to an existing graph.
 These routes fail before mutation with version-specific errors. Raster/PDF exports that contain the
 Origin demo watermark are retained only as diagnostic artifacts and are not reported as successful
 deliverables.
-| Unsupported | Authenticated remote connectors, treating a PID difference as proof of COM ownership, or force-terminating Origin from PID observation alone. |
 
 The plugin never treats “no exception” as proof that a scientific result is correct. Check
 `origin_capabilities` for the detected Origin version and the
@@ -209,6 +218,7 @@ The software is provided under the [MIT License](LICENSE), without warranty of a
 - [Complete Tool Reference](docs/TOOL-REFERENCE.md)
 - [Architecture And Safety](docs/ARCHITECTURE.md)
 - [Validation for 0.2.3](docs/VALIDATION-0.2.3.md)
+- [Origin 2021 compatibility update](docs/ORIGIN-2021-COMPATIBILITY.md)
 - [Previous validation: 0.2.0](docs/VALIDATION-0.2.0.md), [0.2.1](docs/VALIDATION-0.2.1.md), and [0.2.2](docs/VALIDATION-0.2.2.md)
 - [Experimental Version Archive](docs/EXPERIMENTAL-VERSIONS.md)
 - [References And Attribution](docs/REFERENCES.md)
