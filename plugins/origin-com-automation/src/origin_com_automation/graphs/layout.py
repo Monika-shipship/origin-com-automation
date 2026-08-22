@@ -53,32 +53,41 @@ def build_layout_plan(
     if normalized == "inset":
         if len(sources) != 1 or normalized_position is None:
             raise GraphLayoutError("inset requires one source graph and position")
-        command = f"layer -i {sources[0]};"
+        command = f"layadd igp:={target} type:=insetdata activate:=1;"
         delta = 1
     elif normalized == "dual_y":
-        command = "layer -y;"
+        command = f"layadd igp:={target} type:=righty activate:=1;"
         delta = 1
     elif normalized == "grid":
         if not rows or not columns or rows < 1 or columns < 1:
             raise GraphLayoutError("grid requires positive rows and columns")
         if len(layers) > rows * columns:
             raise GraphLayoutError("grid capacity is smaller than the layer count")
-        command = f"layarrange row:={rows} col:={columns};"
+        command = f"layarrange igp:={target} row:={rows} col:={columns};"
         delta = 0
     elif normalized == "merge":
         if not sources:
             raise GraphLayoutError("merge requires source graph refs")
-        command = "merge_graph;"
-        delta = len(sources)
+        graph_expression = "+char(10)$+".join(f'"{item}"' for item in sources)
+        dimensions = f" row:={rows} col:={columns}" if rows and columns else ""
+        command = (
+            f"merge_graph option:=specified graphs:={graph_expression} "
+            f"keep:=1 arrange:=1{dimensions};"
+        )
+        delta = 0
     elif normalized == "add_layer":
-        command = "layer -n;"
+        command = f"layadd igp:={target} type:=normal activate:=1;"
         delta = 1
     elif normalized == "link_axes":
-        command = "layer -l;"
+        if len(layers) != 2:
+            raise GraphLayoutError("link_axes requires parent and child layer refs")
+        command = "laylink"
         delta = 0
     else:
-        command = "layer -e;"
-        delta = -1
+        if not layers:
+            raise GraphLayoutError("extract requires at least one layer ref")
+        command = "layextract"
+        delta = 0
     return LayoutPlan(
         action=normalized,
         graph_ref=target,

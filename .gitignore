@@ -1,2 +1,3 @@
 plugins/origin-com-automation/build/
 plugins/origin-com-automation/src/*.egg-info/
+**/__pycache__/

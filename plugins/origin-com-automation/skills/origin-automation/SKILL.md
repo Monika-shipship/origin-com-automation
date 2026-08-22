@@ -78,7 +78,7 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - **Validation mismatch:** inspect the mismatched data/source/property once and make one targeted correction. Re-run only the failed verification, not the whole workflow.
 - **Transient read failure:** rely on the plugin's bounded internal retry. Do not add another manual retry loop.
 - **Write, analysis, save, export, timeout, or RPC failure:** never replay blindly. If the same failure repeats after the single targeted correction, stop, safely shut down when possible, and report the exact blocker.
-- **First COM timeout:** call `origin_recover_session` immediately. Do not call `origin_shutdown` first because the poisoned STA worker is already blocked. Start a fresh owned session only after recovery, and never replay the timed-out mutation unless the user explicitly authorizes it after inspecting state.
+- **First COM timeout:** call `origin_recover_session` immediately on the same MCP server process. Do not start a new stdio server or call `origin_shutdown` first because the poisoned state and STA worker are process-local. Start a fresh owned session only after recovery, and never replay the timed-out mutation unless the user explicitly authorizes it after inspecting state.
 - **FigureSpec planning blocker:** report the exact blocker. Move to focused tools only when the
   requested feature is supported there and the scientific intent remains unchanged; do not weaken
   the spec or set `allow_unverified=true` on the user's behalf.
@@ -97,10 +97,20 @@ Exporting from a project file uses route 3 and a working copy. Source replacemen
 - X-Functions use typed parameters and declared outputs. Set the unverified-function opt-in only
   when the user explicitly chose that exact function and accepts its capability status.
 - Graph templates must be discovered first and applied by exact path plus SHA-256. Never treat a
-  user workbook template as a graph template or use it implicitly during data import.
+  user workbook template as a graph template or use it implicitly during data import. Origin 9.8
+  has no verified non-destructive adapter for applying an OTP to an existing graph; report
+  `GRAPH_TEMPLATE_UNSUPPORTED_ON_VERSION` instead of attempting `template_apply` or destructive
+  `LoadTemplate` behavior.
 - Preview QA requires a nonblank PNG and decisive pixel metrics. Expected colors are evidence of
   rendering, not proof of correct worksheet bindings; verify both when the plot source matters.
-- Verify saved/exported files exist, are non-empty, and match the requested format. Do not claim success from a non-throwing COM method alone.
+- Origin 9.8 predates real Image Pages (minimum 9.85) and its `expGraph` does not support SVG.
+  Treat the precise version-gate results as unsupported capability, not a retryable failure; never
+  substitute a Matrix/Graph object for an Image Page or rename another export format to SVG.
+- Verify saved/exported files exist, are non-empty, match the requested format, and pass license
+  watermark inspection. A detected demo watermark is a failed deliverable with a retained
+  diagnostic artifact; never remove, cover, recolor, crop, or bypass it.
+- Partial worksheet writes must report `surrounding_readback_verified=true`; verifying only the
+  requested patch is insufficient because Origin 9.8 can clear trailing cells.
 - Temporary editability checks must be restored before saving. Reopen only when persistence/editability is part of the requested acceptance criteria or a high-risk source replacement.
 
 ## Completion Format

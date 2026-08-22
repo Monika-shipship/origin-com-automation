@@ -71,8 +71,15 @@ class TaskManager:
                 self._prune()
                 return None
             with self._lock:
-                record["state"] = "succeeded"
                 record["result"] = result
+                if isinstance(result, dict) and result.get("success") is False:
+                    record["state"] = "failed"
+                    record["error_code"] = result.get("error_code", "TASK_FAILED")
+                    record["error_message"] = result.get(
+                        "error_message", "Workflow returned an unsuccessful result"
+                    )
+                else:
+                    record["state"] = "succeeded"
                 record["finished_at"] = time.time()
                 record["mutation_active"] = False
             self._prune()

@@ -74,5 +74,5 @@ def apply_template_plan(
         template_path=path,
         sha256=digest,
         required_layers=required_layers,
-        command=f'template_apply file:="{path.as_posix()}";',
+        command="",
     )

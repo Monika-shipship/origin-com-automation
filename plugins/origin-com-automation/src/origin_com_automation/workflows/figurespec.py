@@ -139,6 +139,32 @@ def compile_figure_spec(
             )
         elif entry["status"] == "supported_unverified":
             warnings.append(f"plot {plot.id} uses a supported-unverified graph route")
+    resolved_input_worksheet_ref: str | None = None
+    if spec.route == "data_to_project" and spec.input.source_mode == "snapshot":
+        requested_book = str(spec.input.worksheet_ref or "").strip()
+        if not requested_book:
+            blockers.append(
+                "snapshot data_to_project requires input.worksheet_ref as a bare workbook name"
+            )
+        elif any(token in requested_book for token in "[]!"):
+            blockers.append(
+                "snapshot input.worksheet_ref must be a bare workbook name, not a worksheet range"
+            )
+        else:
+            resolved_input_worksheet_ref = f"[{requested_book}]Sheet1"
+            for analysis in spec.analyses:
+                if analysis.worksheet_ref != resolved_input_worksheet_ref:
+                    blockers.append(
+                        f"snapshot input will create {resolved_input_worksheet_ref}, "
+                        f"but analysis {analysis.id} references {analysis.worksheet_ref}"
+                    )
+            for plot in spec.plots:
+                plot_worksheet = plot.roles.get("worksheet")
+                if plot_worksheet is not None and plot_worksheet != resolved_input_worksheet_ref:
+                    blockers.append(
+                        f"snapshot input will create {resolved_input_worksheet_ref}, "
+                        f"but plot {plot.id} references {plot_worksheet}"
+                    )
     input_stage = (
         "connector"
         if spec.route == "data_to_project" and spec.input.source_mode == "linked"
@@ -184,5 +210,6 @@ def compile_figure_spec(
             ),
         },
         "resolved_input": str(source),
+        "resolved_input_worksheet_ref": resolved_input_worksheet_ref,
         "resolved_project_output": str(output),
     }

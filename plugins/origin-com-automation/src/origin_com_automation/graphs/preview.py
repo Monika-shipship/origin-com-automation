@@ -8,6 +8,8 @@ from typing import Any
 import numpy as np
 from PIL import Image
 
+from ..services.watermarks import inspect_export_watermark
+
 
 def _rgb(hex_color: str) -> np.ndarray:
     value = hex_color.lstrip("#")
@@ -57,5 +59,6 @@ def inspect_png(
         "content_bbox": bbox,
         "expected_color_pixels": expected_counts,
         "file_size": source.stat().st_size,
+        "watermark": inspect_export_watermark(source),
     }
 

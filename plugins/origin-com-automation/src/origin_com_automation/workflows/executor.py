@@ -36,6 +36,7 @@ def execute_figure(
     warnings: list[str] = list(plan["warnings"])
     failed: dict[str, Any] | None = None
     session_started = False
+    actual_input_ref: str | None = None
 
     def run(stage: str, function, *, mutation: bool = True) -> ResultEnvelope:
         nonlocal failed
@@ -81,6 +82,35 @@ def execute_figure(
             )
         if not input_result.success:
             return {"success": False, **failed, "completed_stages": completed, "artifacts": artifacts, "warnings": warnings}
+        if spec.route == "data_to_project":
+            actual_input_ref = str(
+                (input_result.data or {}).get("worksheet_ref") or ""
+            ).strip() or None
+            planned_input_ref = plan.get("resolved_input_worksheet_ref")
+            if not actual_input_ref and spec.input.source_mode == "snapshot":
+                failed = {
+                    "failed_stage": input_stage,
+                    "error_code": "FIGURE_INPUT_REF_UNCONFIRMED",
+                    "error_message": "Import succeeded without returning a canonical worksheet_ref",
+                    "data": input_result.data,
+                }
+                return {"success": False, **failed, "completed_stages": completed, "artifacts": artifacts, "warnings": warnings}
+            if not actual_input_ref:
+                actual_input_ref = spec.input.worksheet_ref
+            if planned_input_ref and actual_input_ref != planned_input_ref:
+                failed = {
+                    "failed_stage": input_stage,
+                    "error_code": "FIGURE_INPUT_REF_MISMATCH",
+                    "error_message": (
+                        f"Origin created {actual_input_ref}, but the approved plan requires "
+                        f"{planned_input_ref}"
+                    ),
+                    "data": {
+                        "actual_worksheet_ref": actual_input_ref,
+                        "planned_worksheet_ref": planned_input_ref,
+                    },
+                }
+                return {"success": False, **failed, "completed_stages": completed, "artifacts": artifacts, "warnings": warnings}
 
         for analysis in spec.analyses:
             if analysis.backend == "origin_native" and analysis.create_operation:
@@ -147,7 +177,7 @@ def execute_figure(
             if not result.success:
                 return {"success": False, **failed, "completed_stages": completed, "artifacts": artifacts, "warnings": warnings}
 
-        qa_ref = spec.input.worksheet_ref
+        qa_ref = actual_input_ref or spec.input.worksheet_ref
         if qa_ref:
             qa = run(
                 "qa",
@@ -176,6 +206,7 @@ def execute_figure(
             "artifacts": artifacts,
             "warnings": warnings,
             "graph_names": graph_names,
+            "resolved_worksheet_ref": actual_input_ref,
         }
     finally:
         if session_started:

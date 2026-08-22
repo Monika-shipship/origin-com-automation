@@ -32,7 +32,8 @@ and native Analysis Operations, save a separate project, export figures, and che
   are available only through explicit, clearly labeled compatibility routes.
 - Create and modify graphs, including series, axes, legends, layouts, templates, and export options.
 - Read and edit worksheets, matrices, Image Pages, Notes, and Project Explorer folders.
-- Save a new OPJU, export PNG/TIFF/PDF/SVG, preview graphs, and verify bindings and artifacts.
+- Save a new OPJU, export version-supported graph formats, preview graphs, and verify bindings,
+  artifacts, and demo-license watermark status. Origin 9.8 supports PNG/TIFF/PDF but not SVG.
 
 <!-- section:ask-codex -->
 ## What To Tell Codex
@@ -130,7 +131,8 @@ The bootstrap creates a version-scoped runtime under
   of repeating full discovery after every healthy step.
 - Critical scientific parameters such as branch, range, filters, model, constraints, derivative
   method, smoothing, and units are not guessed.
-- After `COM_TIMEOUT`, use `origin_recover_session` and then start a fresh owned Origin session.
+- After `COM_TIMEOUT`, use `origin_recover_session` on the same MCP server process and then start a
+  fresh owned Origin session.
 
 <!-- section:scope-limits -->
 ## Verified Scope And Limits
@@ -139,6 +141,12 @@ The bootstrap creates a version-scoped runtime under
 |---|---|
 | Verified | The 2024b validation record covers core owned-session work, local CSV/Excel import, worksheet readback, Origin `F(x)`, native linear-fit recalculation, save/reopen, common project objects, basic graphs, previews, and serial workflows. |
 | Version-dependent | Generic allowlisted X-Functions, analysis templates, specialized graph families, some layout/template operations, and less common Matrix/Image/Folder actions require capability checks and explicit opt-in where requested. |
+
+Origin 2021 (9.8) does not expose real Image Pages (introduced in 9.85), does not support SVG via
+`expGraph`, and has no verified non-destructive adapter for applying an OTP to an existing graph.
+These routes fail before mutation with version-specific errors. Raster/PDF exports that contain the
+Origin demo watermark are retained only as diagnostic artifacts and are not reported as successful
+deliverables.
 | Unsupported | Authenticated remote connectors, treating a PID difference as proof of COM ownership, or force-terminating Origin from PID observation alone. |
 
 The plugin never treats “no exception” as proof that a scientific result is correct. Check

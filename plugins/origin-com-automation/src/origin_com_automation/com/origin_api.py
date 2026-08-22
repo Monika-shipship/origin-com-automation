@@ -67,6 +67,7 @@ from ..services.exports import (
     validate_export_path,
 )
 from ..services.graphs import build_graph_spec
+from ..services.watermarks import inspect_export_watermark
 from ..services.projects import (
     SourceOverwriteError,
     copy_project,
@@ -77,7 +78,6 @@ from ..services.worksheets import table_from_com_value
 from ..utils.hashing import sha256_file
 from .discovery import discover_registrations, executable_version
 from .errors import (
-    AnalysisExecutionError,
     LabTalkExecutionError,
     NoActiveSessionError,
     NoExistingOriginError,
@@ -148,6 +148,20 @@ WORKSHEET_DATA_FORMATS = {
     "variant": ORIGIN_ARRAY2D_VARIANT,
 }
 SINGLE_INSTANCE_PROGIDS = {"Origin.ApplicationSI", "Origin.ApplicationCOMSI"}
+
+
+def _origin_version_tuple(value: str | None) -> tuple[int, int] | None:
+    if not value:
+        return None
+    numbers = re.findall(r"\d+", str(value))
+    if len(numbers) < 2:
+        return None
+    return int(numbers[0]), int(numbers[1])
+
+
+def _origin_version_at_least(value: str | None, minimum: tuple[int, int]) -> bool:
+    parsed = _origin_version_tuple(value)
+    return parsed is not None and parsed >= minimum
 OWNED_INSTANCE_PROGID = "Origin.Application"
 ORIGIN_DISABLE_SAVE_PROMPT_SCRIPT = "doc -s;"
 ORIGIN_DELAYED_EXIT_SCRIPT = "def timerproc { exit; } timer 1;"
@@ -356,6 +370,28 @@ def _readback_matrix(
             for c in range(columns)
         ]
         for r in range(rows)
+    ]
+
+
+def _slice_matrix_block(
+    table: list[list[Any]],
+    *,
+    row: int,
+    column: int,
+    rows: int,
+    columns: int,
+) -> list[list[Any]]:
+    """Return an exact matrix window, padding missing cells for stable comparison."""
+
+    return [
+        [
+            table[row + row_offset][column + column_offset]
+            if row + row_offset < len(table)
+            and column + column_offset < len(table[row + row_offset])
+            else None
+            for column_offset in range(columns)
+        ]
+        for row_offset in range(rows)
     ]
 
 
@@ -1515,7 +1551,13 @@ class OriginController:
                 return ResultEnvelope.fail(
                     exc.code,
                     exc.message,
-                    data=context_data(),
+                    data=context_data(
+                        {
+                            "recovery_tool": "origin_recover_session",
+                            "recovery_requires_same_server": True,
+                            "recovery_scope": "current_mcp_server_process",
+                        }
+                    ),
                     warnings=warnings,
                     duration_ms=int((time.perf_counter() - started) * 1000),
                 )
@@ -2675,12 +2717,29 @@ class OriginController:
             except TransformValidationError as exc:
                 return ResultEnvelope.fail(exc.code, str(exc))
             destination.Cols = len(transformed.columns)
+            column_data_formats: list[int | None] = []
+            for index in range(len(transformed.columns)):
+                column_values = [
+                    output_row[index] if index < len(output_row) else None
+                    for output_row in transformed.rows
+                ]
+                column_data_formats.append(
+                    _set_column_data_format(
+                        _worksheet_column(destination, index),
+                        column_values,
+                        force=True,
+                    )
+                )
             set_result = destination.SetData(transformed.rows, 0, 0)
             if set_result is False or set_result == 0:
                 return ResultEnvelope.fail(
                     "WORKSHEET_TRANSFORM_WRITE_REJECTED",
                     "Origin rejected the transformed worksheet block",
                 )
+            try:
+                destination.Rows = len(transformed.rows)
+            except Exception:
+                pass
             destination_columns = _collection_items(_safe_attr(destination, "Columns"))
             for index, label in enumerate(transformed.columns):
                 if index < len(destination_columns):
@@ -2696,6 +2755,26 @@ class OriginController:
                 columns=len(transformed.columns),
             )
             mismatches = _matrix_mismatches(transformed.rows, readback)
+            actual_rows = int(_safe_attr(destination, "Rows", len(readback)) or 0)
+            actual_columns = int(
+                _safe_attr(destination, "Cols", len(transformed.columns)) or 0
+            )
+            label_mismatches = [
+                {
+                    "column": index,
+                    "expected": label,
+                    "actual": str(_safe_attr(destination_columns[index], "LongName", ""))
+                    if index < len(destination_columns)
+                    else None,
+                }
+                for index, label in enumerate(transformed.columns)
+                if index >= len(destination_columns)
+                or str(_safe_attr(destination_columns[index], "LongName", "")) != label
+            ]
+            dimension_verified = (
+                actual_rows == len(transformed.rows)
+                and actual_columns == len(transformed.columns)
+            )
             data = {
                 "action": transformed.action,
                 "execution_mode": "materialized",
@@ -2704,13 +2783,17 @@ class OriginController:
                 "input_rows": transformed.input_rows,
                 "output_rows": transformed.output_rows,
                 "columns": transformed.columns,
-                "readback_verified": not mismatches,
+                "column_data_formats": column_data_formats,
+                "dimension_verified": dimension_verified,
+                "actual_dimensions": [actual_rows, actual_columns],
+                "label_mismatches": label_mismatches,
+                "readback_verified": not mismatches and dimension_verified and not label_mismatches,
                 "mismatches": mismatches,
             }
-            if mismatches:
+            if mismatches or not dimension_verified or label_mismatches:
                 return ResultEnvelope.fail(
                     "WORKSHEET_TRANSFORM_UNCONFIRMED",
-                    "Transformed worksheet readback did not match",
+                    "Origin readback, dimensions, or labels did not match the transformed worksheet",
                     data=data,
                 )
             return ResultEnvelope.ok(data)
@@ -3095,25 +3178,39 @@ class OriginController:
             column_major_bridge = matrix_object is not matrix
             if plan.action == "write":
                 block = [list(item) for item in plan.values or ()]
-                result = matrix_object.SetData(block, plan.row, plan.column)
+                if column_major_bridge:
+                    # Origin 9.8 MatrixObject uses (column, row) offsets even
+                    # though MatrixSheet and the public API are row-first.
+                    result = matrix_object.SetData(block, plan.column, plan.row)
+                else:
+                    result = matrix_object.SetData(block, plan.row, plan.column)
                 if result is False or result == 0:
                     return ResultEnvelope.fail("MATRIX_WRITE_REJECTED", "Origin rejected Matrix.SetData")
-                raw = _matrix_object_block(
-                    matrix_object,
-                    plan.row,
-                    plan.column,
-                    len(block),
-                    len(block[0]) if block else 0,
+                full_readback = _normalize_matrix_object_table(
+                    matrix_object.GetData(),
+                    column_major_bridge=column_major_bridge,
                 )
-                readback = _normalize_matrix_object_table(
-                    raw, column_major_bridge=column_major_bridge
+                block_columns = len(block[0]) if block else 0
+                readback = _slice_matrix_block(
+                    full_readback,
+                    row=plan.row,
+                    column=plan.column,
+                    rows=len(block),
+                    columns=block_columns,
                 )
                 mismatches = _matrix_mismatches(block, readback)
                 if mismatches:
                     return ResultEnvelope.fail(
                         "MATRIX_WRITE_UNCONFIRMED",
                         "Matrix readback did not match",
-                        data={"mismatches": mismatches},
+                        data={
+                            "mismatches": mismatches,
+                            "full_shape": [
+                                len(full_readback),
+                                len(full_readback[0]) if full_readback else 0,
+                            ],
+                            "verified_range": list(plan.expected_range or ()),
+                        },
                     )
                 return ResultEnvelope.ok(
                     {
@@ -3121,6 +3218,11 @@ class OriginController:
                         "matrix_ref": plan.matrix_ref,
                         "shape": list(plan.shape or (0, 0)),
                         "expected_range": list(plan.expected_range or ()),
+                        "verified_range": list(plan.expected_range or ()),
+                        "full_shape": [
+                            len(full_readback),
+                            len(full_readback[0]) if full_readback else 0,
+                        ],
                         "readback_verified": True,
                     }
                 )
@@ -3190,10 +3292,23 @@ class OriginController:
                         "IMAGE_PAGE_ALREADY_EXISTS",
                         f"Image Page already exists: {plan.image_ref}",
                     )
+                detected_version = str(
+                    _safe_attr(app, "Version", self._origin_version or "")
+                )
+                if not _origin_version_at_least(detected_version, (9, 85)):
+                    return ResultEnvelope.fail(
+                        "IMAGE_PAGE_UNSUPPORTED_VERSION",
+                        "Real Image Pages require Origin 2021b (9.85) or newer; no semantics-preserving fallback exists",
+                        data={
+                            "detected_origin": detected_version or None,
+                            "minimum_origin": "9.85",
+                            "fallback_attempted": False,
+                        },
+                    )
                 if pages is None or not callable(getattr(pages, "Add", None)):
                     return ResultEnvelope.fail(
-                        "IMAGE_CREATE_UNAVAILABLE",
-                        "Origin does not expose ImagePages.Add through COM",
+                        "IMAGE_COM_INTERFACE_UNAVAILABLE",
+                        "This supported Origin version does not expose ImagePages.Add through COM",
                     )
                 before_count = int(_safe_attr(pages, "Count", 0) or 0)
                 page = pages.Add()
@@ -3354,9 +3469,57 @@ class OriginController:
                         pass
                     verified = _resolve_root_folder(root, plan.destination or "") is not None
                 elif plan.action == "move":
-                    return ResultEnvelope.fail(
-                        "PROJECT_FOLDER_MOVE_UNAVAILABLE",
-                        "RootFolder COM does not expose a verified folder move method",
+                    source_parts = _project_path_parts(plan.path)
+                    destination_parts = _project_path_parts(plan.destination or "")
+                    if not source_parts or not destination_parts:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_ACTION_INVALID",
+                            "folder move requires non-root source and destination",
+                        )
+                    if source_parts[-1] != destination_parts[-1]:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_MOVE_RENAME_UNSUPPORTED",
+                            "Folder move must preserve the folder name; use rename as a separate verified operation",
+                        )
+                    if _resolve_root_folder(root, plan.path) is None:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_NOT_FOUND",
+                            f"Project Folder not found: {plan.path}",
+                        )
+                    destination_parent = "/" + "/".join(destination_parts[:-1])
+                    if _resolve_root_folder(root, destination_parent) is None:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_DESTINATION_NOT_FOUND",
+                            f"Destination parent folder not found: {destination_parent}",
+                        )
+                    source_parent = "/" + "/".join(source_parts[:-1])
+                    state_variable = f"__codex_folder_{uuid4().hex[:8]}"
+                    app.Execute(
+                        f"string {state_variable}$; "
+                        f"pe_path path:={state_variable}$ type:=0 active:=1;"
+                    )
+                    previous_path = str(
+                        _safe_call(app, "LTStr", state_variable, default="") or ""
+                    )
+                    try:
+                        activated = app.Execute(
+                            f"pe_cd path:={_labtalk_quote(source_parent)};"
+                        )
+                        moved = app.Execute(
+                            f"pe_move move:={_labtalk_quote(source_parts[-1])} "
+                            f"path:={_labtalk_quote(destination_parent)};"
+                        )
+                    finally:
+                        if previous_path:
+                            app.Execute(f"pe_cd path:={_labtalk_quote(previous_path)};")
+                    if activated is False or activated == 0 or moved is False or moved == 0:
+                        return ResultEnvelope.fail(
+                            "PROJECT_FOLDER_ACTION_REJECTED",
+                            "Origin rejected the Project Explorer folder move",
+                        )
+                    verified = (
+                        _resolve_root_folder(root, plan.path) is None
+                        and _resolve_root_folder(root, plan.destination or "") is not None
                     )
                 else:
                     folder = _resolve_root_folder(root, plan.path)
@@ -3373,26 +3536,37 @@ class OriginController:
                             "Non-empty folder deletion requires confirm_recursive=true",
                         )
                     destroy = getattr(folder, "Destroy", None)
-                    if not callable(destroy):
-                        return ResultEnvelope.fail(
-                            "PROJECT_FOLDER_DELETE_UNAVAILABLE",
-                            "Folder does not expose Destroy through COM",
-                        )
-                    result = destroy()
-                    if result is False or result == 0:
-                        return ResultEnvelope.fail(
-                            "PROJECT_FOLDER_ACTION_REJECTED",
-                            "Origin rejected folder deletion",
-                        )
+                    if callable(destroy):
+                        try:
+                            destroy()
+                        except Exception:
+                            pass
                     verified = _resolve_root_folder(
                         _safe_attr(app, "RootFolder"), plan.path
                     ) is None
+                    if not verified:
+                        result = app.Execute(
+                            f"pe_rmdir folder:={_labtalk_quote(plan.path)} "
+                            "folpromt:=0 pgpromt:=0;"
+                        )
+                        if result is False or result == 0:
+                            return ResultEnvelope.fail(
+                                "PROJECT_FOLDER_ACTION_REJECTED",
+                                "Origin rejected folder deletion through pe_rmdir",
+                            )
+                        verified = _resolve_root_folder(
+                            _safe_attr(app, "RootFolder"), plan.path
+                        ) is None
                 data = {
                     "action": plan.action,
                     "path": plan.path,
                     "destination": plan.destination,
                     "verified": verified,
-                    "interface": "root_folder_com",
+                    "interface": (
+                        "root_folder_labtalk_fallback"
+                        if plan.action in {"move", "delete"}
+                        else "root_folder_com"
+                    ),
                 }
                 if not verified:
                     return ResultEnvelope.fail(
@@ -3497,6 +3671,7 @@ class OriginController:
                             pass
             if note is None:
                 return ResultEnvelope.fail("NOTE_NOT_FOUND", f"Note not found: {plan.note_ref}")
+            actual_note_ref = str(_safe_attr(note, "Name", plan.note_ref))
             artifacts: list[Artifact] = []
             if plan.action in {"create", "write"}:
                 note.Text = plan.text
@@ -3508,27 +3683,70 @@ class OriginController:
                     return ResultEnvelope.fail("NOTE_WRITE_UNCONFIRMED", "Note text readback did not match")
             elif plan.action == "export":
                 export = getattr(note, "Export", None)
-                if not callable(export):
-                    return ResultEnvelope.fail("NOTE_EXPORT_UNAVAILABLE", "Note does not expose Export")
-                result = export(str(plan.path), plan.format)
+                before_signature = (
+                    (plan.path.stat().st_size, plan.path.stat().st_mtime_ns)
+                    if plan.path and plan.path.is_file()
+                    else None
+                )
+                if callable(export):
+                    result = export(str(plan.path), plan.format)
+                    export_interface = "note_com"
+                elif plan.format == "text":
+                    result = app.Execute(
+                        f"save -n {_labtalk_quote(actual_note_ref)} "
+                        f"{_labtalk_quote(str(plan.path))};"
+                    )
+                    export_interface = "labtalk_save_note"
+                else:
+                    result = app.Execute(
+                        f"win -a {_labtalk_quote(actual_note_ref)}; "
+                        f"note.ExportHTML({_labtalk_quote(str(plan.path))});"
+                    )
+                    export_interface = "labtalk_note_html"
                 if result is False or result == 0 or not plan.path or not plan.path.is_file() or plan.path.stat().st_size == 0:
                     return ResultEnvelope.fail("NOTE_EXPORT_UNCONFIRMED", "Note export artifact is missing or empty")
+                after_signature = (plan.path.stat().st_size, plan.path.stat().st_mtime_ns)
+                if before_signature is not None and after_signature == before_signature:
+                    return ResultEnvelope.fail(
+                        "NOTE_EXPORT_UNCONFIRMED",
+                        "Note export did not change the existing target artifact",
+                    )
                 artifacts.append(Artifact(str(plan.path), "origin_note"))
             elif plan.action == "delete":
                 delete = getattr(note, "Delete", None)
-                if not callable(delete):
-                    return ResultEnvelope.fail("NOTE_DELETE_UNAVAILABLE", "Note does not expose Delete")
-                result = delete()
+                if callable(delete):
+                    result = delete()
+                    delete_interface = "note_com"
+                else:
+                    result = app.Execute(
+                        f"window -cn {_labtalk_quote(actual_note_ref)};"
+                    )
+                    delete_interface = "labtalk_window_cn"
                 if result is False or result == 0:
                     return ResultEnvelope.fail("NOTE_DELETE_REJECTED", "Origin rejected Note deletion")
+                remaining = _safe_call(app, "FindNotePage", actual_note_ref, default=None)
+                if remaining is None:
+                    remaining = _find_collection_item(_safe_attr(app, "Notes"), actual_note_ref)
+                if remaining is not None:
+                    return ResultEnvelope.fail(
+                        "NOTE_DELETE_UNCONFIRMED",
+                        "Origin accepted Note deletion but the Note still exists",
+                    )
             return ResultEnvelope.ok(
                 {
                     "action": plan.action,
                     "requested_ref": plan.note_ref,
-                    "note_ref": str(_safe_attr(note, "Name", plan.note_ref)),
+                    "note_ref": actual_note_ref,
                     "text": str(_safe_attr(note, "Text", "")) if plan.action != "delete" else None,
                     "format": str(_safe_attr(note, "Format", plan.format)),
                     "path": str(plan.path) if plan.path else None,
+                    "interface": (
+                        export_interface
+                        if plan.action == "export"
+                        else delete_interface
+                        if plan.action == "delete"
+                        else "note_com"
+                    ),
                 },
                 artifacts=artifacts,
             )
@@ -3561,21 +3779,34 @@ class OriginController:
         def write() -> ResultEnvelope:
             app = self._require_app()
             sheet = _resolve_worksheet(app, name)
+            initial_rows = int(_safe_attr(sheet, "Rows", 0) or 0)
             initial_columns = int(_safe_attr(sheet, "Cols", 0) or 0)
             if width and initial_columns < column + width:
                 sheet.Cols = column + width
+            preservation_rows = max(initial_rows, row + len(rectangular))
+            before = _readback_matrix(
+                sheet,
+                row=0,
+                column=column,
+                rows=preservation_rows,
+                columns=width,
+            )
+            merged = [list(item) for item in before]
+            for row_offset, source_row in enumerate(rectangular):
+                for column_offset, value in enumerate(source_row):
+                    merged[row + row_offset][column_offset] = value
             formats: list[int | None] = []
             for offset in range(width):
                 target_column = _worksheet_column(sheet, column + offset)
-                column_values = [item[offset] for item in rectangular]
+                column_values = [item[offset] for item in merged]
                 formats.append(
                     _set_column_data_format(
                         target_column,
                         column_values,
-                        force=column + offset >= initial_columns,
+                        force=True,
                     )
                 )
-            set_result = sheet.SetData(rectangular, row, column)
+            set_result = sheet.SetData(merged, 0, column)
             base_data = {
                 "worksheet": name,
                 "worksheet_ref": name,
@@ -3589,6 +3820,12 @@ class OriginController:
                 ],
                 "set_data_return": set_result,
                 "column_data_formats": formats,
+                "preservation_range": [
+                    0,
+                    column,
+                    preservation_rows - 1 if preservation_rows else -1,
+                    column + width - 1 if width else column - 1,
+                ],
                 "stage": "write",
             }
             if set_result is False or (
@@ -3610,24 +3847,42 @@ class OriginController:
                 )
             readback = _readback_matrix(
                 sheet,
-                row=row,
+                row=0,
                 column=column,
+                rows=preservation_rows,
+                columns=width,
+            )
+            mismatches = _matrix_mismatches(merged, readback)
+            requested_readback = _slice_matrix_block(
+                readback,
+                row=row,
+                column=0,
                 rows=len(rectangular),
                 columns=width,
             )
-            mismatches = _matrix_mismatches(rectangular, readback)
+            requested_mismatches = _matrix_mismatches(rectangular, requested_readback)
+            overwritten_existing_cells = max(
+                0,
+                min(initial_rows, row + len(rectangular)) - row,
+            ) * width
+            preserved_cell_count = max(
+                0, initial_rows * width - overwritten_existing_cells
+            )
             verified_data = {
                 **base_data,
                 "stage": "verify",
-                "readback_verified": not mismatches,
+                "readback_verified": not requested_mismatches,
+                "surrounding_readback_verified": not mismatches,
+                "preserved_cell_count": preserved_cell_count,
                 "non_empty_count": sum(
                     profile["non_empty_count"]
                     for profile in (
-                        _column_profile([item[offset] for item in readback])
+                        _column_profile([item[offset] for item in requested_readback])
                         for offset in range(width)
                     )
                 ),
                 "mismatches": mismatches,
+                "requested_mismatches": requested_mismatches,
                 "auto_recalculation_flushed": auto_recalculation_flushed,
             }
             if mismatches:
@@ -4536,14 +4791,63 @@ class OriginController:
                     "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
                     "recalculate_mode must be none when create_operation is false",
                 )
+            if not (
+                (method == "linear_fit" and not native_options)
+                or (method == "fft" and set(native_options) <= {"sample_spacing"})
+            ):
+                return ResultEnvelope.fail(
+                    "ORIGIN_NATIVE_METHOD_UNAVAILABLE",
+                    f"No verified Origin-native mapping is available for {method} with these options",
+                    data={
+                        "requested_method": method,
+                        "verified_methods": verified_native_analysis_methods(),
+                        "backend": "origin_native",
+                        "python_fallback_attempted": False,
+                    },
+                )
+            if method == "fft" and native_options.get("sample_spacing", 1.0) != 1.0:
+                return ResultEnvelope.fail(
+                    "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
+                    "Origin-native FFT sample_spacing mapping is not yet verified",
+                )
             worksheet_ref = RangeRef(worksheet_name).value
+
+            def canonical_letter(value: str | int) -> str | None:
+                if isinstance(value, str) and re.fullmatch(r"[A-Za-z]+", value.strip()):
+                    return value.strip().upper()
+                return None
+
+            def resolve_native_columns() -> ResultEnvelope:
+                try:
+                    sheet = _resolve_worksheet(self._require_app(), worksheet_ref)
+                    return ResultEnvelope.ok(
+                        {
+                            "x_column": column_letters(_column_index(sheet, x_column)),
+                            "y_column": column_letters(_column_index(sheet, y_column)),
+                        }
+                    )
+                except LookupError as exc:
+                    return ResultEnvelope.fail("ANALYSIS_COLUMN_NOT_FOUND", str(exc))
+
+            resolved_x = canonical_letter(x_column)
+            resolved_y = canonical_letter(y_column)
+            if resolved_x is None or resolved_y is None:
+                resolved_columns = self._submit(
+                    resolve_native_columns,
+                    retryable=True,
+                    stage="native_analysis_resolve_columns",
+                )
+                if not resolved_columns.success:
+                    return resolved_columns
+                resolved_x = str((resolved_columns.data or {})["x_column"])
+                resolved_y = str((resolved_columns.data or {})["y_column"])
             try:
                 if method == "linear_fit" and not native_options:
                     plan = build_xfunction_plan(
                         "fitlr",
                         {
                             "iy": RangeRef(
-                                f"{worksheet_ref}!({x_column},{y_column})"
+                                f"{worksheet_ref}!({resolved_x},{resolved_y})"
                             )
                         },
                         outputs={"oy": OutputRef("<new>")},
@@ -4551,16 +4855,11 @@ class OriginController:
                         recalculate_mode=recalculate_mode,
                     )
                 elif method == "fft" and set(native_options) <= {"sample_spacing"}:
-                    if native_options.get("sample_spacing", 1.0) != 1.0:
-                        return ResultEnvelope.fail(
-                            "NATIVE_ANALYSIS_OPTION_UNSUPPORTED",
-                            "Origin-native FFT sample_spacing mapping is not yet verified",
-                        )
                     plan = build_xfunction_plan(
                         "fft1",
                         {
-                            "ix": RangeRef(f"{worksheet_ref}!{x_column}"),
-                            "iy": RangeRef(f"{worksheet_ref}!{y_column}"),
+                            "ix": RangeRef(f"{worksheet_ref}!{resolved_x}"),
+                            "iy": RangeRef(f"{worksheet_ref}!{resolved_y}"),
                         },
                         create_operation=create_operation,
                         recalculate_mode=recalculate_mode,
@@ -4598,7 +4897,7 @@ class OriginController:
 
             return self._submit(execute_native, stage=f"native_analysis_{method}")
 
-        def analyze() -> ResultEnvelope:
+        def collect_analysis_data() -> ResultEnvelope:
             app = self._require_app()
             sheet = _resolve_worksheet(app, worksheet_name)
             x_index = _column_index(sheet, x_column)
@@ -4628,19 +4927,6 @@ class OriginController:
             if row_order == "reverse":
                 x_values.reverse()
                 y_values.reverse()
-            try:
-                python_options = dict(request.options)
-                python_options["backend"] = "python"
-                python_options.pop("create_operation", None)
-                python_options.pop("recalculate_mode", None)
-                analysis_result = run_analysis_data(
-                    method,
-                    x_values,
-                    y_values,
-                    python_options,
-                )
-            except (TypeError, ValueError) as exc:
-                raise AnalysisExecutionError(str(exc)) from exc
             return ResultEnvelope.ok(
                 {
                     "worksheet": worksheet_name,
@@ -4655,18 +4941,64 @@ class OriginController:
                         "rows_read": len(raw),
                         "rows_after_filter": len(x_values),
                     },
-                    "result": analysis_result,
-                    "backend": "python",
-                    "editable_in_origin": False,
-                    "native_operation_created": False,
-                    "python_fallback_attempted": False,
-                },
-                warnings=[
-                    "Python analysis does not create a recalculating Origin Analysis Operation"
-                ],
+                    "x_values": x_values,
+                    "y_values": y_values,
+                }
             )
 
-        return self._submit(analyze, retryable=True)
+        collected = self._submit(
+            collect_analysis_data,
+            retryable=True,
+            stage="python_analysis_read",
+        )
+        if not collected.success:
+            return collected
+        collected_data = dict(collected.data or {})
+        x_values = list(collected_data.pop("x_values", []))
+        y_values = list(collected_data.pop("y_values", []))
+        python_options = dict(request.options)
+        python_options["backend"] = "python"
+        python_options.pop("create_operation", None)
+        python_options.pop("recalculate_mode", None)
+        self._current_stage = "python_analysis_compute"
+        analysis_started = time.perf_counter()
+        try:
+            analysis_result = run_analysis_data(
+                method,
+                x_values,
+                y_values,
+                python_options,
+            )
+        except (TypeError, ValueError) as exc:
+            return ResultEnvelope.fail(
+                "ANALYSIS_EXECUTION_FAILED",
+                str(exc),
+                data={
+                    **collected_data,
+                    "backend": "python",
+                    "analysis_duration_ms": int(
+                        (time.perf_counter() - analysis_started) * 1000
+                    ),
+                },
+                warnings=collected.warnings,
+            )
+        return ResultEnvelope.ok(
+            {
+                **collected_data,
+                "result": analysis_result,
+                "backend": "python",
+                "editable_in_origin": False,
+                "native_operation_created": False,
+                "python_fallback_attempted": False,
+                "analysis_duration_ms": int(
+                    (time.perf_counter() - analysis_started) * 1000
+                ),
+            },
+            warnings=[
+                *collected.warnings,
+                "Python analysis does not create a recalculating Origin Analysis Operation",
+            ],
+        )
 
     @_serialized_operation
     def create_graph(
@@ -4774,14 +5106,215 @@ class OriginController:
 
         def execute() -> ResultEnvelope:
             app = self._require_app()
+            page_name = _graph_page_name(plan.graph_ref)
+            graph_pages = _safe_attr(app, "GraphPages")
+            page = _safe_call(graph_pages, "Item", page_name, default=None)
             layer = _safe_call(app, "FindGraphLayer", plan.graph_ref, default=None)
             if layer is None:
-                layer = _safe_call(app, "FindGraphLayer", f"[{plan.graph_ref}]1", default=None)
-            if layer is None:
+                layer = _safe_call(app, "FindGraphLayer", f"[{page_name}]1", default=None)
+            if page is None or layer is None:
                 return ResultEnvelope.fail("GRAPH_NOT_FOUND", f"Graph not found: {plan.graph_ref}")
-            result = layer.Execute(plan.command)
+            layers = _safe_attr(page, "Layers")
+            before_layer_count = int(_safe_attr(layers, "Count", 0) or 0)
+            before_page_names = {
+                str(_safe_attr(item, "Name", ""))
+                for item in _collection_items(graph_pages)
+            }
+
+            def layer_index(reference: str) -> int:
+                referenced_page = _graph_page_name(reference)
+                if reference.startswith("[") and referenced_page != page_name:
+                    raise GraphLayoutError(
+                        f"layer ref {reference} does not belong to graph {page_name}"
+                    )
+                suffix = reference.split("]", 1)[1] if "]" in reference else reference
+                match = re.search(r"(\d+)$", suffix)
+                if not match or int(match.group(1)) < 1:
+                    raise GraphLayoutError(f"layer ref must end in a 1-based index: {reference}")
+                index = int(match.group(1))
+                if index > before_layer_count:
+                    raise GraphLayoutError(f"layer ref is outside graph {page_name}: {reference}")
+                return index
+
+            command = plan.command
+            expected_new_pages: int | None = None
+            try:
+                target_layer_index = (
+                    layer_index(plan.graph_ref)
+                    if plan.graph_ref.startswith("[") and "]" in plan.graph_ref
+                    else 1
+                )
+                if plan.action in {"add_layer", "dual_y", "inset"}:
+                    activated = app.Execute(
+                        f"win -a {_labtalk_quote(page_name)}; page.active={target_layer_index};"
+                    )
+                    if activated is False or activated == 0:
+                        raise GraphLayoutError(
+                            f"could not activate target layer {target_layer_index}"
+                        )
+                if plan.action == "link_axes":
+                    parent_index, child_index = [layer_index(item) for item in plan.layer_refs]
+                    if parent_index == child_index:
+                        raise GraphLayoutError("link_axes parent and child must be distinct")
+                    command = (
+                        f"laylink igp:={_labtalk_quote(page_name)} igl:={parent_index} "
+                        f"destlayers:={child_index} XAxis:=1 YAxis:=1 unit:=link;"
+                    )
+                elif plan.action == "extract":
+                    indices = [layer_index(item) for item in plan.layer_refs]
+                    selection = ",".join(str(item) for item in indices)
+                    command = (
+                        f"layextract igp:={_labtalk_quote(page_name)} "
+                        f"layer:={_labtalk_quote(selection)} keep:=1 fullpage:=1;"
+                    )
+                    expected_new_pages = len(indices)
+                elif plan.action == "merge":
+                    source_names = [_graph_page_name(item) for item in plan.source_graph_refs]
+                    missing = [
+                        item for item in source_names
+                        if _safe_call(graph_pages, "Item", item, default=None) is None
+                    ]
+                    if missing:
+                        raise GraphLayoutError(
+                            f"merge source graphs were not found: {', '.join(missing)}"
+                        )
+                    expression = "+char(10)$+".join(
+                        _labtalk_quote(item) for item in source_names
+                    )
+                    dimensions = (
+                        f" row:={plan.rows} col:={plan.columns}"
+                        if plan.rows and plan.columns else ""
+                    )
+                    command = (
+                        f"merge_graph option:=specified graphs:={expression} keep:=1 "
+                        f"arrange:=1{dimensions};"
+                    )
+                    expected_new_pages = 1
+            except GraphLayoutError as exc:
+                return ResultEnvelope.fail(exc.code, str(exc))
+
+            result = app.Execute(command)
             if result is False or result == 0:
                 return ResultEnvelope.fail("GRAPH_LAYOUT_REJECTED", f"Origin rejected layout {plan.action}")
+            page = _safe_call(graph_pages, "Item", page_name, default=page)
+            layers = _safe_attr(page, "Layers")
+            after_layer_count = int(_safe_attr(layers, "Count", 0) or 0)
+            actual_layer_delta = after_layer_count - before_layer_count
+            after_page_names = {
+                str(_safe_attr(item, "Name", ""))
+                for item in _collection_items(graph_pages)
+            }
+            created_graph_refs = sorted(after_page_names - before_page_names)
+            verification: dict[str, Any] = {
+                "before_layer_count": before_layer_count,
+                "after_layer_count": after_layer_count,
+                "actual_layer_delta": actual_layer_delta,
+                "created_graph_refs": created_graph_refs,
+                "command_accepted": True,
+            }
+            verified = True
+            if plan.action in {"add_layer", "dual_y", "inset"}:
+                verified = actual_layer_delta == 1
+            elif expected_new_pages is not None:
+                verified = len(created_graph_refs) == expected_new_pages
+            elif plan.action == "grid":
+                verified = actual_layer_delta == 0 and after_layer_count > 0
+
+            if verified and plan.action == "grid":
+                geometries: list[dict[str, float | None]] = []
+                for index in range(1, after_layer_count + 1):
+                    app.Execute(
+                        f"win -a {_labtalk_quote(page_name)}; page.active={index};"
+                    )
+                    geometries.append(
+                        {
+                            "left": _safe_call(app, "LTVar", "layer.left", default=None),
+                            "top": _safe_call(app, "LTVar", "layer.top", default=None),
+                            "width": _safe_call(app, "LTVar", "layer.width", default=None),
+                            "height": _safe_call(app, "LTVar", "layer.height", default=None),
+                        }
+                    )
+                verification["geometries"] = geometries
+                readable = all(
+                    all(geometry[key] is not None for key in geometry)
+                    and float(geometry["width"]) > 0
+                    and float(geometry["height"]) > 0
+                    for geometry in geometries
+                )
+                positions = {
+                    (round(float(geometry["left"]), 1), round(float(geometry["top"]), 1))
+                    for geometry in geometries
+                    if geometry["left"] is not None and geometry["top"] is not None
+                }
+                verified = readable and len(positions) == after_layer_count
+
+            if verified and plan.action in {"dual_y", "inset", "link_axes"}:
+                active_index = (
+                    after_layer_count
+                    if plan.action in {"dual_y", "inset"}
+                    else layer_index(plan.layer_refs[1])
+                )
+                app.Execute(f"win -a {_labtalk_quote(page_name)}; page.active={active_index};")
+                expected_parent = (
+                    target_layer_index
+                    if plan.action in {"dual_y", "inset"}
+                    else layer_index(plan.layer_refs[0])
+                )
+                link_parent = _safe_call(app, "LTVar", "layer.link", default=None)
+                x_link = _safe_call(app, "LTVar", "layer.x.link", default=None)
+                y_link = _safe_call(app, "LTVar", "layer.y.link", default=None)
+                verification.update(
+                    {
+                        "active_layer": active_index,
+                        "expected_link_parent": expected_parent,
+                        "link_parent": link_parent,
+                        "x_link": x_link,
+                        "y_link": y_link,
+                    }
+                )
+                verified = link_parent is not None and int(link_parent) == expected_parent
+                if plan.action in {"dual_y", "link_axes"}:
+                    verified = verified and x_link is not None and int(x_link) == 1
+                if plan.action == "link_axes":
+                    verified = verified and y_link is not None and int(y_link) == 1
+
+            if verified and plan.action == "inset" and plan.position:
+                left, top, right, bottom = plan.position
+                geometry_result = app.Execute(
+                    f"layer.left={left * 100}; layer.top={top * 100}; "
+                    f"layer.width={(right - left) * 100}; "
+                    f"layer.height={(bottom - top) * 100};"
+                )
+                geometry = {
+                    "left": _safe_call(app, "LTVar", "layer.left", default=None),
+                    "top": _safe_call(app, "LTVar", "layer.top", default=None),
+                    "width": _safe_call(app, "LTVar", "layer.width", default=None),
+                    "height": _safe_call(app, "LTVar", "layer.height", default=None),
+                }
+                verification["geometry"] = geometry
+                expected_geometry = {
+                    "left": left * 100,
+                    "top": top * 100,
+                    "width": (right - left) * 100,
+                    "height": (bottom - top) * 100,
+                }
+                verified = geometry_result not in {False, 0} and all(
+                    geometry[key] is not None
+                    and math.isclose(float(geometry[key]), value, abs_tol=0.2)
+                    for key, value in expected_geometry.items()
+                )
+            verification["verified"] = verified
+            if not verified:
+                return ResultEnvelope.fail(
+                    "GRAPH_LAYOUT_UNCONFIRMED",
+                    f"Origin accepted layout {plan.action}, but the requested structure was not confirmed",
+                    data={
+                        "action": plan.action,
+                        "graph_ref": plan.graph_ref,
+                        "verification": verification,
+                        "partial_mutation": actual_layer_delta != 0 or bool(created_graph_refs),
+                    },
+                )
             return ResultEnvelope.ok(
                 {
                     "action": plan.action,
@@ -4789,7 +5322,8 @@ class OriginController:
                     "source_graph_refs": list(plan.source_graph_refs),
                     "position": list(plan.position) if plan.position else None,
                     "expected_layer_delta": plan.expected_layer_delta,
-                    "status": "supported_unverified",
+                    "verification": verification,
+                    "status": "verified",
                 }
             )
 
@@ -4825,22 +5359,23 @@ class OriginController:
                 )
             except (GraphTemplateError, ObjectPlanError) as exc:
                 return ResultEnvelope.fail(getattr(exc, "code", "GRAPH_TEMPLATE_INVALID"), str(exc))
-            executor = getattr(page, "Execute", None)
-            if not callable(executor) and actual_layers:
-                executor = getattr(layers.Item(0), "Execute", None)
-            if not callable(executor):
-                return ResultEnvelope.fail("GRAPH_TEMPLATE_INTERFACE_UNAVAILABLE", "Graph does not expose Execute")
-            result = executor(plan.command)
-            if result is False or result == 0:
-                return ResultEnvelope.fail("GRAPH_TEMPLATE_REJECTED", "Origin rejected template application")
-            return ResultEnvelope.ok(
-                {
+            return ResultEnvelope.fail(
+                "GRAPH_TEMPLATE_UNSUPPORTED_ON_VERSION",
+                "Applying an OTP to an existing graph has no verified non-destructive adapter for this Origin version",
+                data={
                     "graph_ref": graph_ref,
                     "template_path": str(plan.template_path),
                     "sha256": plan.sha256,
                     "layers": actual_layers,
-                    "status": "supported_unverified",
-                }
+                    "detected_origin": str(
+                        _safe_attr(app, "Version", self._origin_version or "")
+                    ) or None,
+                    "command_executed": False,
+                    "reason": (
+                        "template_apply is not an Origin X-Function and LoadTemplate "
+                        "may replace layers/data bindings"
+                    ),
+                },
             )
 
         return self._submit(execute, stage="apply_graph_template")
@@ -5187,6 +5722,17 @@ class OriginController:
             fmt = normalize_export_format(export_format)
         except ValueError as exc:
             return ResultEnvelope.fail("UNSUPPORTED_EXPORT", str(exc))
+        if fmt == "svg" and not _origin_version_at_least(self._origin_version, (9, 85)):
+            return ResultEnvelope.fail(
+                "UNSUPPORTED_EXPORT_FOR_VERSION",
+                "Origin 2021 (9.8) expGraph does not support SVG export",
+                data={
+                    "format": fmt,
+                    "detected_origin": self._origin_version,
+                    "supported_formats": ["pdf", "png", "tif"],
+                    "command_executed": False,
+                },
+            )
         target = Path(output_path).expanduser().resolve()
         if target.exists() and overwrite == "skip":
             return ResultEnvelope.fail("OUTPUT_EXISTS", f"Refusing to overwrite existing graph export: {target}")
@@ -5220,9 +5766,27 @@ class OriginController:
             path = result.data["path"]
             try:
                 actual = validate_export_path(path, kind=fmt)
+                watermark = inspect_export_watermark(actual)
+                artifact = Artifact(str(actual), "graph_export")
+                if watermark["status"] == "detected":
+                    return ResultEnvelope.fail(
+                        "LICENSE_WATERMARK_DETECTED",
+                        "Origin exported a demo-license watermarked artifact; it is retained for diagnosis but is not a valid deliverable",
+                        data={**result.data, "watermark": watermark},
+                        artifacts=[Artifact(str(actual), "watermarked_graph_export")],
+                        duration_ms=result.duration_ms,
+                    )
+                if watermark["status"] == "indeterminate":
+                    return ResultEnvelope.fail(
+                        "EXPORT_WATERMARK_UNVERIFIED",
+                        "The graph export was created, but its license-watermark status could not be verified",
+                        data={**result.data, "watermark": watermark},
+                        artifacts=[Artifact(str(actual), "unverified_graph_export")],
+                        duration_ms=result.duration_ms,
+                    )
                 result = ResultEnvelope.ok(
-                    result.data,
-                    artifacts=[Artifact(str(actual), "graph_export")],
+                    {**result.data, "watermark": watermark},
+                    artifacts=[artifact],
                     duration_ms=result.duration_ms,
                 )
             except (OSError, ValueError) as exc:
