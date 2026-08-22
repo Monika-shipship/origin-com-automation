@@ -147,7 +147,7 @@ The bootstrap creates a version-scoped runtime under
 
 | Status | Meaning |
 |---|---|
-| Verified in this fork | OriginPro 2021 `9.8.0.200`: 292 unit/regression tests, 41/41 targeted live checks against both source and installed package, FigureSpec preflight/end-to-end validation, and 45/45 MCP tool registration plus health checks. |
+| Verified in this fork | OriginPro 2021 `9.8.0.200`: 297 passing automated tests (8 live smoke tests skipped in the isolated rerun), 41/41 targeted live checks against both source and installed package, FigureSpec preflight/end-to-end validation, and 45/45 MCP tool registration plus health checks. |
 | Verified upstream baseline | Original v0.2.3 on Origin 2024b `10.1.0.178`; do not treat this as a live 2024b rerun of the compatibility commit. |
 | Version-dependent | Generic allowlisted X-Functions, analysis templates, specialized graph families, some layout/template operations, and less common Matrix/Image/Folder actions require capability checks and explicit opt-in where requested. |
 | Unsupported | Authenticated remote connectors, treating a PID difference as proof of COM ownership, or force-terminating Origin from PID observation alone. |

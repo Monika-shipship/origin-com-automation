@@ -15,7 +15,7 @@ the same COM, LabTalk, X-Function, export, or project-object behavior.
 
 | Environment | Status | Evidence |
 |---|---|---|
-| Windows 10 x64, OriginPro 2021 `9.8.0.200`, Python `3.13.7` x64, SciPy `1.18.1` | **Verified for this fork** | 292 unit/regression tests; 41/41 targeted live checks against the source tree; 41/41 repeated against the installed package; FigureSpec preflight and successful end-to-end run; 45/45 MCP tools registered and health-checked. |
+| Windows 10 x64, OriginPro 2021 `9.8.0.200`, Python `3.13.7` x64, SciPy `1.18.1` | **Verified for this fork** | 297 automated tests passed in an isolated fresh-clone fixture (8 live smoke tests skipped); 41/41 targeted live checks against the source tree; 41/41 repeated against the installed package; FigureSpec preflight and successful end-to-end run; 45/45 MCP tools registered and health-checked. |
 | Origin 2024b `10.1.0.178` | **Verified only for the original upstream v0.2.3 baseline** | The upstream validation record covers 2024b. The compatibility changes retain automated regression coverage, but this exact fork was not rerun live on 2024b. |
 | Origin 2021b `9.85` through 2024a | **Version-dependent and not exhaustively live-tested** | The implementation uses capability gates and version-aware fallbacks. Do not infer full support from the version number alone. |
 | Earlier than Origin 2021 `9.8` | **Unsupported/unverified** | No live validation evidence. |
@@ -55,7 +55,7 @@ proof that all 45 tools completed every possible live action.
 
 ## Validation summary
 
-- Unit and regression tests: `292 passed`.
+- Isolated fresh-clone automated suite: `297 passed`, `8 skipped` live smoke tests, and one external Pydantic forward-reference warning.
 - Origin 2021 targeted live matrix from source: `41/41` expectations met.
 - Origin 2021 targeted live matrix from installed plugin: `41/41` expectations met.
 - FigureSpec: invalid snapshot reference blocked in preflight; valid `[WFFix]Sheet1` flow completed import, plot, save, QA, and shutdown.
